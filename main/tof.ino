@@ -15,6 +15,7 @@ const int MIN_ACTIVE_ZONES = 5;     // how many zones must trigger to count as d
 
 void setup()
 {
+  pinMode(2,OUTPUT);
   Serial.begin(115200);
   delay(1000);
   Serial.println("VL53L5CX TOF w/ Counter");
@@ -62,6 +63,7 @@ void loop()
       {
         if (!currentlyDetected)
         {
+          digitalWrite(2,1);
           peopleCount++;
           currentlyDetected = true; // object detected
           Serial.print("Count incremented! Total = ");
@@ -71,6 +73,7 @@ void loop()
       else
       {
         currentlyDetected = false; // reset when object leaves
+        digitalWrite(2,0);
       }
     }
   }
