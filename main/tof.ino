@@ -10,12 +10,18 @@ int imageWidth = 0; //Used to pretty print output
 int peopleCount = 0;
 bool currentlyDetected = false; // detection state
 
+// State machine
+enum CrossState { IDLE, TOP_DETECTED, BOTTOM_DETECTED };
+CrossState state = IDLE;
+
 const int DISTANCE_THRESHOLD = 500; // mm
 const int MIN_ACTIVE_ZONES = 5;     // how many zones must trigger to count as detection
 
+const int LED_PIN = 2;
+
 void setup()
 {
-  pinMode(2,OUTPUT);
+  pinMode(LED_PIN,OUTPUT);
   Serial.begin(115200);
   delay(1000);
   Serial.println("VL53L5CX TOF w/ Counter");
@@ -35,7 +41,7 @@ void setup()
   imageResolution = myImager.getResolution(); //Query sensor for current resolution - either 4x4 or 8x8
   imageWidth = sqrt(imageResolution); //Calculate printing width
 
-  myImager.setRangingFrequency(15);
+  myImager.setRangingFrequency(15); // Using 8x8, min frequency is 1Hz and max is 15Hz
 
   myImager.startRanging();
 }
@@ -47,36 +53,85 @@ void loop()
   {
     if (myImager.getRangingData(&measurementData))  //Read distance data into array
     {
-      int activeZones = 0;
+      int topActive = 0;
+      int bottomActive = 0;
 
       // Count how many zones are within threshold
       for (int i = 0; i < imageResolution; i++)
       {
         if (measurementData.distance_mm[i] > 0 && measurementData.distance_mm[i] <= DISTANCE_THRESHOLD)
         {
-          activeZones++;
+          if (i < 32)
+            bottomActive++;
+          else
+            topActive++;
         }
       }
 
-      // Detection logic
-      if (activeZones >= MIN_ACTIVE_ZONES)
+  // State machine transitions
+      switch (state)
       {
-        if (!currentlyDetected)
-        {
-          digitalWrite(2,1);
-          peopleCount++;
-          currentlyDetected = true; // object detected
-          Serial.print("Count incremented! Total = ");
-          Serial.println(peopleCount);
-        }
+        case IDLE:
+          if (topActive >= MIN_ACTIVE_ZONES)
+          {
+            peopleCount++;
+            Serial.print("Count incremented! Total = ");
+            Serial.println(peopleCount);
+            digitalWrite(LED_PIN, HIGH);
+            state = TOP_DETECTED;
+          }
+          else if (bottomActive >= MIN_ACTIVE_ZONES)
+          {
+            peopleCount++;
+            Serial.print("Count incremented! Total = ");
+            Serial.println(peopleCount);
+            digitalWrite(LED_PIN, HIGH);
+            state = BOTTOM_DETECTED;
+          }
+          else
+          { digitalWrite(LED_PIN, LOW);
+            state = IDLE;
+          }
+          break;
+
+        case TOP_DETECTED:
+          if (topActive >= MIN_ACTIVE_ZONES)
+          {
+            digitalWrite(LED_PIN, HIGH);
+            state = TOP_DETECTED;
+          }
+          else if (bottomActive >= MIN_ACTIVE_ZONES)
+          {
+            Serial.println("Person EXITED");
+            digitalWrite(LED_PIN, HIGH);
+            state = BOTTOM_DETECTED;
+          }
+          else
+          { digitalWrite(LED_PIN, LOW);
+            state = IDLE;
+          }
+          break;
+
+        case BOTTOM_DETECTED:
+          if (bottomActive >= MIN_ACTIVE_ZONES)
+          {
+            digitalWrite(LED_PIN, HIGH);
+            state = BOTTOM_DETECTED;
+          }
+          else if (topActive >= MIN_ACTIVE_ZONES)
+          {
+            Serial.println("Person ENTERED");
+            digitalWrite(LED_PIN, HIGH);
+            state = TOP_DETECTED;
+          }
+          else
+          { digitalWrite(LED_PIN, LOW);
+            state = IDLE;
+          }
+          break;
       }
-      else
-      {
-        currentlyDetected = false; // reset when object leaves
-        digitalWrite(2,0);
-      }
+      
     }
   }
-
   delay(50); // adjust sampling rate
 }
