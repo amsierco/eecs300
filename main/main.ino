@@ -13,6 +13,8 @@
 #define image_width 8         // Row of TOF image resolution
 #define ranging_freq 15       // Ranging freq
 
+#define I2C_DEBUG false
+
 // State Machine
 enum CrossState {
   INIT,   // Initialization
@@ -35,6 +37,21 @@ enum CrossState {
   DDEC
 };
 CrossState state = INIT;
+
+enum CellType {
+  L_OUTB, // Large outer cell
+  L_INB,  // Large inner cell
+  L_OUTS, // Small outer cell
+  L_INS,   // Small inner cell
+  
+  R_OUTB, // Large outer cell
+  R_INB,  // Large inner cell
+  R_OUTS, // Small outer cell
+  R_INS   // Small inner cell
+};
+
+int  cell_counts[8];
+bool cell_active[8];
 
 // Left TOF Sensor
 SparkFun_VL53L5CX tofl;
@@ -68,7 +85,7 @@ void setup()
   digitalWrite(tofl_rst, LOW);
   delay(1000);
 
-  i2cdetect();delay(2000);
+  if(I2C_DEBUG){i2cdetect();delay(2000);}
 
   // Initialize Left TOF
   Serial.println(("Initializing Left TOF"));
@@ -92,12 +109,12 @@ void setup()
     delay(1000);
   }
 
-  i2cdetect();delay(2000);
+  if(I2C_DEBUG){i2cdetect();delay(2000);}
 
   // Initialize Right TOF
   digitalWrite(tofr_rst, LOW); //Release right TOF from reset
   delay(1000);
-  i2cdetect();delay(2000);
+  if(I2C_DEBUG){i2cdetect();delay(2000);}
   Serial.println("Initializing Right TOF");
   if (!tofr.begin()) {
     Serial.print("Trying aux address: 0x");
@@ -108,14 +125,8 @@ void setup()
     }
   }
   Serial.println("Right TOF Found!");
-  
-  // Change Right TOF Addr
-  // if (tofr.setAddress(tofr_addr) == false) {Serial.println(("Right TOF: Failed to change addr")); while(1); }
-  // Serial.print(("Setting Right TOF address to: 0x"));
-  // Serial.println(tofr.getAddress(), HEX);
-  // delay(1000);
 
-  i2cdetect();delay(2000);
+  if(I2C_DEBUG){i2cdetect();delay(2000);}
 
   //Configure both sensors the same with 64 slots
   tofl.setResolution(image_resolution); 
@@ -158,28 +169,6 @@ void debug() {
   }
 }
 
-enum CellType {
-  L_OUTB, // Large outer cell
-  L_INB,  // Large inner cell
-  L_OUTS, // Small outer cell
-  L_INS,   // Small inner cell
-  
-  R_OUTB, // Large outer cell
-  R_INB,  // Large inner cell
-  R_OUTS, // Small outer cell
-  R_INS   // Small inner cell
-};
-
-/*
-  Right Sensor
-  * Row 0 Col 0               *
-  *                           *
-
-*/
-
-int  cell_counts[8];
-bool cell_active[8];
-
 bool meetsThresh(int i, VL53L5CX_ResultsData &buf)
 {
   return buf.distance_mm[i] > 0 && buf.distance_mm[i] < dist_threshold;
@@ -192,46 +181,38 @@ void countCells(bool bleft, bool bright)
     cell_active[i] = false;
   }
   
-  // Left TOF: Read appropriate cells
-  if(bleft){
-    for(int i=0; i < image_resolution; i++){ // Loop all 64 cells
-      int col = i % image_width; // Calculates current column
-      int row = i / 8;           // Calculates curren row
-      
-      // Determine Cell Type
-      CellType cell;
-      if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
-        cell = L_INS;
-      } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
-        cell = L_OUTS;
-      } else if (col >= 2 && col <= 7 && row >= 0 && row <= 3){
-        cell = L_INB;
-      } else if (col >= 2 && col <= 7 && row >= 3 && row <= 7){
-        cell = L_OUTB;
-      }
-      if(meetsThresh(i, datal)) cell_counts[cell] += 1;
-    }
-  }
 
-  // Right TOF: Read appropriate cells
-  if(bright){
-    for(int i=0; i < image_resolution; i++){ // Loop all 64 cells
-      int col = i % image_width; // Calculates current column
-      int row = i / 8;           // Calculates curren row
-      
-      // Determine Cell Type
-      CellType cell;
-      if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
-        cell = R_INB;
-      } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
-        cell = R_OUTB;
-      } else if (col >= 5 && col <= 7 && row >= 0 && row <= 3){
-        cell = R_INS;
-      } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
-        cell = R_OUTS;
-      }
-      if(meetsThresh(i, datar)) cell_counts[cell] += 1;
+  for(int i=0; i < image_resolution; i++){ // Loop all 64 cells
+    int col = i % image_width; // Calculates current column
+    int row = i / 8;           // Calculates curren row
+    
+    // Determine Left Cell Type
+    CellType cell_l;
+    CellType cell_r;
+    if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
+      cell_l = L_INS;
+    } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
+      cell_l = L_OUTS;
+    } else if (col >= 2 && col <= 7 && row >= 0 && row <= 3){
+      cell_l = L_INB;
+    } else if (col >= 2 && col <= 7 && row >= 3 && row <= 7){
+      cell_l = L_OUTB;
     }
+    
+    // Determine Left Cell Type
+    if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
+      cell_r = R_INB;
+    } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
+      cell_r = R_OUTB;
+    } else if (col >= 5 && col <= 7 && row >= 0 && row <= 3){
+      cell_r = R_INS;
+    } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
+      cell_r = R_OUTS;
+    }
+
+    // Update respective counts
+    if(meetsThresh(i, datal) && bleft) cell_counts[cell_l] += 1;
+    if(meetsThresh(i, datar) && bright) cell_counts[cell_r] += 1;
   }
 
   // Update active cells
@@ -248,13 +229,6 @@ void countCells(bool bleft, bool bright)
   Serial.printf("Detect \t|\t %-15d \t|\t %-15d\n", int(left_detect), int(right_detect));
   */
 }
-
-/*
-  ALWAYS:
-  poll
-  get cell counts
-  state logic
-*/
 
 void loop()
 {
