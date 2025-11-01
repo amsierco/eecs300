@@ -8,12 +8,15 @@
 #define tofl_addr 0x44        // Left TOF addr
 #define tofr_addr 0x46        // Right TOF addr
 #define tof_addr_default 0x29 // Default
-#define I2C_freq 1000000       // I2C bus freq (1 MHz)
+#define I2C_freq 400000       // I2C bus freq (1 MHz)
 #define image_resolution 64   // TOF image resolution
 #define image_width 8         // Row of TOF image resolution
 #define ranging_freq 15       // Ranging freq
+#define LED_PIN 2
 
 #define I2C_DEBUG false
+#define PUTTY_DEBUG true
+#define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
 
 // State Machine
 enum CrossState {
@@ -68,8 +71,9 @@ int counter = 0;              // Primary In/Out counter
 
 void setup()
 {
-  Serial.begin(115200);
-  
+  Serial.begin(921600);
+  pinMode(LED_PIN, OUTPUT);
+
   delay(1000);
   Serial.println("- - - - - - - - - - Initializing - - - - - - - - - -");
 
@@ -80,7 +84,6 @@ void setup()
   pinMode(tofr_rst, OUTPUT);
   digitalWrite(tofl_rst, HIGH);
   digitalWrite(tofr_rst, HIGH);
-  i2cdetect();delay(2000);
   delay(1000);
   digitalWrite(tofl_rst, LOW);
   delay(1000);
@@ -138,7 +141,7 @@ void setup()
   tofl.startRanging();
   tofr.startRanging();
 
-  state = POLL;
+  state = IDLE;
 
   Serial.println("- - - - - - - - - - Initialization complete, starting counter - - - - - - - - - - ");
 }
@@ -171,7 +174,7 @@ void debug() {
 
 bool meetsThresh(int i, VL53L5CX_ResultsData &buf)
 {
-  return buf.distance_mm[i] > 0 && buf.distance_mm[i] < dist_threshold;
+  return buf.distance_mm[i] > 0 && buf.distance_mm[i] <= dist_threshold;
 }
 
 void countCells(bool bleft, bool bright)
@@ -220,8 +223,8 @@ void countCells(bool bleft, bool bright)
     cell_active[i] = cell_counts[i] >= active_threshold;
   }
 
-  Serial.printf("Inner: %-4d %-4d %-4d %-4d\n", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
-  Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\n", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
+  Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
+  Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\r", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
 
   /*
   Serial.println("Data \t|\t Left TOF Readings \t|\t Right TOF Readings");
@@ -232,27 +235,47 @@ void countCells(bool bleft, bool bright)
 
 void loop()
 {
+  delay(300);
+  if(PUTTY_DEBUG)CLEAR_SCREEN();
   
   // Poll both sensors for new data
   bool bleft = pollSensor(tofl, datal);
-  delay(1000);
+  delay(10);
   bool bright = pollSensor(tofr, datar);
   if(!bleft && !bright) return;
 
   // Count cells
   countCells(bleft, bright);
-  //return;
-  // State machine logic
-  /*
-    IF L | R outer --> Pending Enter -- L|R Inner --> +1
-  */
   
+  // FSM state merging
   bool LOUT = cell_active[L_OUTB] || cell_active[L_OUTS];
   bool LIN = cell_active[L_INB] || cell_active[L_INS];
   bool ROUT = cell_active[R_OUTB] || cell_active[R_OUTS];
   bool RIN = cell_active[R_INB] || cell_active[R_INS];
   bool OUT = LOUT || ROUT;
   bool IN = LIN || RIN;
+
+  digitalWrite(LED_PIN, LOW);
+  switch(state){
+    case IDLE:
+      state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      break;
+
+    case ENTER_P:
+      digitalWrite(LED_PIN, HIGH);
+      delay(100);
+      if(IN) ++counter;
+      state = IDLE;
+      break;
+
+    case EXIT_P:
+      delay(100);
+      if(OUT) --counter;
+      state = IDLE;
+      break;
+  }
+  Serial.printf("Count: %-4d \t|\t State: %04d\n\n\r", counter, state);
+  return;
 
   if(state==IDLE && OUT) { // Enter Pending
     state = ENTER_P;
@@ -271,70 +294,6 @@ void loop()
   }
   Serial.printf("Count: %-4d\n\n", counter);
   return;
-
-  if(!EXIT_P && cell_active[L_OUTB] || cell_active[R_OUTB]){
-    // Enter Pending
-    state = ENTER_P;
-  }
-
-  if(ENTER_P && (cell_active[L_INB] || cell_active[R_INB])){
-    ++counter;
-    state = POLL;
-  }
-
-  if(!ENTER_P && cell_active[L_INB] || cell_active[R_INB]){
-    // Enter Pending
-    state = EXIT_P;
-  }
-
-  if(EXIT_P && (cell_active[L_OUTB] || cell_active[R_OUTB])){
-    --counter;
-    state = POLL;
-  }
-
-  Serial.printf("Count: %-4d\n\n", counter);
-
-  // Debugs Left TOF
-  //debug();delay(50);return;
-
-/*
-  
-  // Temp counters
-  volatile int left_count = 0;
-  volatile int right_count = 0;
-
-  // Left TOF: Read appropriate zones
-  if(bleft){
-    for(int i=0; i < image_resolution; i++){
-      int col = i % image_width;
-      if(col >=0 && col <= 3){
-        if(datal.distance_mm[i] > 0 && datal.distance_mm[i] < dist_threshold){
-          left_count++;
-        }
-      }
-    }
-  }
-
-  // Right TOF: Read appropriate zones
-  if(bright){
-    for(int i=0; i < image_resolution; i++){
-      int col = i % image_width;
-      if(col >=4 && col <= 7){
-        if(datar.distance_mm[i] > 0 && datar.distance_mm[i] < dist_threshold){
-          right_count++;
-        }
-      }
-    }
-  }
-
-  bool left_detect  = left_count  >= active_threshold;
-  bool right_detect = right_count >= active_threshold;
-  // Debug Msgs
-  Serial.println("Data \t|\t Left TOF Readings \t|\t Right TOF Readings");
-  Serial.printf("Count \t|\t %-15d \t|\t %-15d\n", int(left_count), int(right_count));
-  Serial.printf("Detect \t|\t %-15d \t|\t %-15d\n", int(left_detect), int(right_detect));
-*/
-  delay(50); //Small delay between polling
 }
 /*#include <Wire.h>
 #include <SparkFun_VL53L5CX_Library.h>
