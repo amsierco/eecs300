@@ -14,9 +14,13 @@
 #define ranging_freq 15       // Ranging freq
 #define LED_PIN 2
 
+// Debugging
 #define I2C_DEBUG false
-#define PUTTY_DEBUG true
+#define PUTTY_DEBUG false
 #define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
+
+unsigned long state_start = 0;
+const unsigned long TIMEOUT = 1000; // ms
 
 // State Machine
 enum CrossState {
@@ -233,9 +237,12 @@ void countCells(bool bleft, bool bright)
   */
 }
 
+bool isTimeout(){
+  return millis() - state_start > TIMEOUT;
+}
+
 void loop()
 {
-  delay(300);
   if(PUTTY_DEBUG)CLEAR_SCREEN();
   
   // Poll both sensors for new data
@@ -255,180 +262,30 @@ void loop()
   bool OUT = LOUT || ROUT;
   bool IN = LIN || RIN;
 
-  digitalWrite(LED_PIN, LOW);
   switch(state){
     case IDLE:
+      digitalWrite(LED_PIN, LOW);
       state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      state_start = millis();
       break;
 
     case ENTER_P:
       digitalWrite(LED_PIN, HIGH);
-      delay(100);
-      if(IN) ++counter;
-      state = IDLE;
+      if(isTimeout()) state = IDLE;
+      if(IN) {
+        ++counter;
+        state = IDLE;
+      }
       break;
 
     case EXIT_P:
-      delay(100);
-      if(OUT) --counter;
-      state = IDLE;
+      digitalWrite(LED_PIN, LOW);
+      if(isTimeout()) state = IDLE;
+      if(OUT) {
+        --counter;
+        state = IDLE;
+      } 
       break;
   }
   Serial.printf("Count: %-4d \t|\t State: %04d\n\n\r", counter, state);
-  return;
-
-  if(state==IDLE && OUT) { // Enter Pending
-    state = ENTER_P;
-
-  } else if (state==ENTER_P && IN) { // +1
-    ++counter;
-    state = IDLE;
-  
-  } else if (state==IDLE && IN) { // Exit Pending
-    state = EXIT_P;
-  
-  } else if (state==EXIT_P && OUT) { // -1
-    --counter;
-    state = IDLE;
-
-  }
-  Serial.printf("Count: %-4d\n\n", counter);
-  return;
 }
-/*#include <Wire.h>
-#include <SparkFun_VL53L5CX_Library.h>
-
-SparkFun_VL53L5CX tofl;
-VL53L5CX_ResultsData measurementData; // Result data class structure, 1356 byes of RAM
-
-int imageResolution = 0; //Used to pretty print output
-int image_width = 0; //Used to pretty print output
-
-int peopleCount = 0;
-bool currentlyDetected = false; // detection state
-
-// State machine
-enum CrossState { IDLE, TOP_DETECTED, BOTTOM_DETECTED };
-CrossState state = IDLE;
-
-const int DISTANCE_THRESHOLD = 500; // mm
-const int MIN_ACTIVE_ZONES = 5;     // how many zones must trigger to count as detection
-
-const int LED_PIN = 2;
-
-void setup()
-{
-  pinMode(LED_PIN,OUTPUT);
-  Serial.begin(115200);
-  delay(1000);
-  Serial.println("VL53L5CX TOF w/ Counter");
-
-  Wire.begin(); //This resets to 100kHz I2C
-  Wire.setClock(1000000); //Sensor has max I2C freq of 1MHz
-  
-  Serial.println("Initializing sensor board. This can take up to 10s. Please wait.");
-  if (tofl.begin() == false)
-  {
-    Serial.println(F("Sensor not found - check your wiring. Freezing"));
-    while (1) ;
-  }
-  
-  tofl.setResolution(8*8); //Enable all 64 pads
-  
-  imageResolution = tofl.getResolution(); //Query sensor for current resolution - either 4x4 or 8x8
-  image_width = sqrt(imageResolution); //Calculate printing width
-
-  tofl.setRangingFrequency(15); // Using 8x8, min frequency is 1Hz and max is 15Hz
-
-  tofl.startRanging();
-}
-
-void loop()
-{
-  //Poll sensor for new data
-  if (tofl.isDataReady() == true)
-  {
-    if (tofl.getRangingData(&measurementData))  //Read distance data into array
-    {
-      int topActive = 0;
-      int bottomActive = 0;
-
-      // Count how many zones are within threshold
-      for (int i = 0; i < imageResolution; i++)
-      {
-        if (measurementData.distance_mm[i] > 0 && measurementData.distance_mm[i] <= DISTANCE_THRESHOLD)
-        {
-          if (i < 32)
-            bottomActive++;
-          else
-            topActive++;
-        }
-      }
-
-  // State machine transitions
-      switch (state)
-      {
-        case IDLE:
-          if (topActive >= MIN_ACTIVE_ZONES)
-          {
-            peopleCount++;
-            Serial.print("Count incremented! Total = ");
-            Serial.println(peopleCount);
-            digitalWrite(LED_PIN, HIGH);
-            state = TOP_DETECTED;
-          }
-          else if (bottomActive >= MIN_ACTIVE_ZONES)
-          {
-            peopleCount++;
-            Serial.print("Count incremented! Total = ");
-            Serial.println(peopleCount);
-            digitalWrite(LED_PIN, HIGH);
-            state = BOTTOM_DETECTED;
-          }
-          else
-          { digitalWrite(LED_PIN, LOW);
-            state = IDLE;
-          }
-          break;
-
-        case TOP_DETECTED:
-          if (topActive >= MIN_ACTIVE_ZONES)
-          {
-            digitalWrite(LED_PIN, HIGH);
-            state = TOP_DETECTED;
-          }
-          else if (bottomActive >= MIN_ACTIVE_ZONES)
-          {
-            Serial.println("Person EXITED");
-            digitalWrite(LED_PIN, HIGH);
-            state = BOTTOM_DETECTED;
-          }
-          else
-          { digitalWrite(LED_PIN, LOW);
-            state = IDLE;
-          }
-          break;
-
-        case BOTTOM_DETECTED:
-          if (bottomActive >= MIN_ACTIVE_ZONES)
-          {
-            digitalWrite(LED_PIN, HIGH);
-            state = BOTTOM_DETECTED;
-          }
-          else if (topActive >= MIN_ACTIVE_ZONES)
-          {
-            Serial.println("Person ENTERED");
-            digitalWrite(LED_PIN, HIGH);
-            state = TOP_DETECTED;
-          }
-          else
-          { digitalWrite(LED_PIN, LOW);
-            state = IDLE;
-          }
-          break;
-      }
-      
-    }
-  }
-  delay(50); // adjust sampling rate
-}*/
