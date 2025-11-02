@@ -1,5 +1,6 @@
-#include <Wire.h> // I2C
-#include <SparkFun_VL53L5CX_Library.h> // TOF lib
+#include <Wire.h>                       // I2C
+#include <esp_task_wdt.h>               // Watch Dog Timer
+#include <SparkFun_VL53L5CX_Library.h>  // TOF lib
 #include <i2cdetect.h>
 
 // Hardware Defines & Globals
@@ -19,10 +20,11 @@
 #define PUTTY_DEBUG false
 #define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
 
-unsigned long state_start = 0;
-const unsigned long TIMEOUT = 1000; // ms
-unsigned long state_end = 0;
-unsigned long state_end2 = 0;
+unsigned long state_start = 0;              // ms
+const unsigned long TIMEOUT = 1000;         // ms
+const unsigned long debounce_thresh = 100;  //ms
+const unsigned long clear_thresh = 1500;    //ms
+
 
 // State Machine
 enum CrossState {
@@ -58,12 +60,17 @@ VL53L5CX_ResultsData datar;
 
 // Software Defines & Globals
 int counter = 0;              // Primary In/Out counter
-#define dist_threshold 500    // mm
+#define dist_threshold 600    // mm
 #define active_threshold 3    // How many zones required to trigger a detection 
 
 void setup()
 {
   Serial.begin(921600);
+    
+  //watchdog timer with 5s period
+  //esp_task_wdt_init(5, true); // Enable watchdog (which will restart ESP32 if it hangs)
+  //esp_task_wdt_add(NULL);     // Add current thread to WDT watch
+  
   pinMode(LED_PIN, OUTPUT);
 
   delay(1000);
@@ -229,6 +236,16 @@ bool isTimeout(){
   return millis() - state_start > TIMEOUT;
 }
 
+bool isDebounce(){
+  return millis() - state_start > debounce_thresh;
+}
+
+bool isClear(){
+  return millis() - state_start > clear_thresh;
+}
+
+int dbl = 0;
+int dblp = 0;
 void loop()
 {
   if(PUTTY_DEBUG)CLEAR_SCREEN();
@@ -250,48 +267,54 @@ void loop()
   bool OUT  = LOUT || ROUT;
   bool IN   = LIN  || RIN;
 
-  const unsigned long debounce_thresh = 100; //ms
-  const unsigned long clear_thresh = 1500;   //ms
 
+  dbl = 0;
   switch(state){
+    // Default IDLE state
     case IDLE:
       digitalWrite(LED_PIN, LOW);
-      //state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
-      if(OUT) {
-        state = ENTER_P;
-      } else if (IN) {
-        state = EXIT_P;
-      } else {
-        state = IDLE;
-      }
+      state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      dblp = (cell_active[L_INS] && cell_active[R_INS]) || (cell_active[L_OUTS] && cell_active[R_OUTS]); 
       state_start = millis();
       break;
 
+    // Door Enter Pending
     case ENTER_P:
       digitalWrite(LED_PIN, HIGH);
-      if(IN && (millis() - state_start >= debounce_thresh) ) {
+      if(IN && isDebounce()) {
         ++counter;
         state = CLEAR;
-        state_end = millis();
+        
+        if(dblp && (cell_active[L_INS] || cell_active[R_INS])){
+          ++counter;
+          dbl = 1;
+        }
       }
       if(isTimeout()) state = IDLE;
       break;
 
+    // Door Exit Pending
     case EXIT_P:
-      if(OUT && (millis() - state_start >= debounce_thresh) ) {
+      if(OUT && isDebounce()) {
         --counter;
         state = CLEAR;
-        state_end2 = millis();
+        
+        if(dblp && (cell_active[L_OUTS] || cell_active[R_OUTS])){
+          --counter;
+          dbl = 1;
+        }
       } 
+      
       if(isTimeout()) state = IDLE;
       break;
 
+    // Door Trigger Clear
     case CLEAR:
-      if(!IN && !OUT && millis() - state_start >= clear_thresh || isTimeout()){
+      if(!IN && !OUT && isClear() || isTimeout()){
         state = IDLE;
         digitalWrite(LED_PIN, LOW);
       }
       break;
   }
-  Serial.printf("Count: %-4d \t|\t State: %04d\n\n\r", counter, state);
+  Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\n\r", counter, state, dbl, dblp);
 }
