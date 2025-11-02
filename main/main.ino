@@ -21,40 +21,28 @@
 
 unsigned long state_start = 0;
 const unsigned long TIMEOUT = 1000; // ms
+unsigned long state_end = 0;
+unsigned long state_end2 = 0;
 
 // State Machine
 enum CrossState {
-  INIT,   // Initialization
-  POLL,   // Poll TOF data
+  IDLE,
   ENTER_P,
   EXIT_P,
-  IDLE,
-
-  OUTL,   // Outer Left
-  OUTR,   // Outer Right
-  INL,    // Inner Left
-  INR,    // Inner Right
-  OUTDL, 
-  OUTDR, 
-  INDL, 
-  INDR, 
-  CINC,    // +1 Count
-  CDEC,    // -1 Count
-  DINC, 
-  DDEC
+  CLEAR
 };
-CrossState state = INIT;
+CrossState state = IDLE;
 
 enum CellType {
-  L_OUTB, // Large outer cell
-  L_INB,  // Large inner cell
-  L_OUTS, // Small outer cell
-  L_INS,   // Small inner cell
+  L_OUTB,   // Large outer cell
+  L_INB,    // Large inner cell
+  L_OUTS,   // Small outer cell
+  L_INS,    // Small inner cell
   
-  R_OUTB, // Large outer cell
-  R_INB,  // Large inner cell
-  R_OUTS, // Small outer cell
-  R_INS   // Small inner cell
+  R_OUTB,   // Large outer cell
+  R_INB,    // Large inner cell
+  R_OUTS,   // Small outer cell
+  R_INS     // Small inner cell
 };
 
 int  cell_counts[8];
@@ -256,35 +244,53 @@ void loop()
   
   // FSM state merging
   bool LOUT = cell_active[L_OUTB] || cell_active[L_OUTS];
-  bool LIN = cell_active[L_INB] || cell_active[L_INS];
+  bool LIN  = cell_active[L_INB]  || cell_active[L_INS];
   bool ROUT = cell_active[R_OUTB] || cell_active[R_OUTS];
-  bool RIN = cell_active[R_INB] || cell_active[R_INS];
-  bool OUT = LOUT || ROUT;
-  bool IN = LIN || RIN;
+  bool RIN  = cell_active[R_INB]  || cell_active[R_INS];
+  bool OUT  = LOUT || ROUT;
+  bool IN   = LIN  || RIN;
+
+  const unsigned long debounce_thresh = 100; //ms
+  const unsigned long clear_thresh = 1500;   //ms
 
   switch(state){
     case IDLE:
       digitalWrite(LED_PIN, LOW);
-      state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      //state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      if(OUT) {
+        state = ENTER_P;
+      } else if (IN) {
+        state = EXIT_P;
+      } else {
+        state = IDLE;
+      }
       state_start = millis();
       break;
 
     case ENTER_P:
       digitalWrite(LED_PIN, HIGH);
-      if(isTimeout()) state = IDLE;
-      if(IN) {
+      if(IN && (millis() - state_start >= debounce_thresh) ) {
         ++counter;
-        state = IDLE;
+        state = CLEAR;
+        state_end = millis();
       }
+      if(isTimeout()) state = IDLE;
       break;
 
     case EXIT_P:
-      digitalWrite(LED_PIN, LOW);
-      if(isTimeout()) state = IDLE;
-      if(OUT) {
+      if(OUT && (millis() - state_start >= debounce_thresh) ) {
         --counter;
-        state = IDLE;
+        state = CLEAR;
+        state_end2 = millis();
       } 
+      if(isTimeout()) state = IDLE;
+      break;
+
+    case CLEAR:
+      if(!IN && !OUT && millis() - state_start >= clear_thresh || isTimeout()){
+        state = IDLE;
+        digitalWrite(LED_PIN, LOW);
+      }
       break;
   }
   Serial.printf("Count: %-4d \t|\t State: %04d\n\n\r", counter, state);
