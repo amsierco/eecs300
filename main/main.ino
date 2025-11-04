@@ -21,8 +21,8 @@
 #define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
 
 unsigned long state_start = 0;              // ms
-const unsigned long TIMEOUT = 1000;         // ms
-const unsigned long debounce_thresh = 100;  //ms
+const unsigned long TIMEOUT = 2000;         // ms
+const unsigned long debounce_thresh = 5;  //ms
 const unsigned long clear_thresh = 1500;    //ms
 
 
@@ -60,9 +60,10 @@ VL53L5CX_ResultsData datar;
 
 // Software Defines & Globals
 int counter = 0;              // Primary In/Out counter
-#define dist_threshold 600    // mm
+#define dist_threshold 900    // mm
 #define active_threshold 3    // How many zones required to trigger a detection 
-
+#define sbs_active_threshold 3 // Side-By-Side zone threshold
+//16.5cm
 void setup()
 {
   Serial.begin(921600);
@@ -191,7 +192,29 @@ void countCells(bool bleft, bool bright)
     // Determine Left Cell Type
     CellType cell_l;
     CellType cell_r;
-    if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
+    if(col >= 0 && col <= 0 && row >= 0 && row <= 3) {
+      cell_l = L_INS;
+    } else if (col >= 0 && col <= 0 && row >= 3 && row <= 7){
+      cell_l = L_OUTS;
+    } else if (col >= 1 && col <= 7 && row >= 0 && row <= 3){
+      cell_l = L_INB;
+    } else if (col >= 1 && col <= 7 && row >= 3 && row <= 7){
+      cell_l = L_OUTB;
+    }
+    
+    // Determine Left Cell Type
+    if(col >= 0 && col <= 6 && row >= 0 && row <= 3) {
+      cell_r = R_INB;
+    } else if (col >= 0 && col <= 6 && row >= 3 && row <= 7){
+      cell_r = R_OUTB;
+    } else if (col >= 6 && col <= 7 && row >= 0 && row <= 3){
+      cell_r = R_INS;
+    } else if (col >= 6 && col <= 7 && row >= 3 && row <= 7){
+      cell_r = R_OUTS;
+    }
+
+  /*
+      if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
       cell_l = L_INS;
     } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
       cell_l = L_OUTS;
@@ -211,25 +234,24 @@ void countCells(bool bleft, bool bright)
     } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
       cell_r = R_OUTS;
     }
+  */
 
     // Update respective counts
     if(meetsThresh(i, datal) && bleft) cell_counts[cell_l] += 1;
     if(meetsThresh(i, datar) && bright) cell_counts[cell_r] += 1;
+
   }
 
   // Update active cells
   for(int i=0; i<8; i++){
     cell_active[i] = cell_counts[i] >= active_threshold;
+    if(i == L_INS || i == L_OUTS || i == R_INS || i == R_OUTS) {
+      cell_active[i] = cell_counts[i] >= sbs_active_threshold;
+    }
   }
 
   Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
   Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\r", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
-
-  /*
-  Serial.println("Data \t|\t Left TOF Readings \t|\t Right TOF Readings");
-  Serial.printf("Count \t|\t %-15d \t|\t %-15d\n", int(left_count), int(right_count));
-  Serial.printf("Detect \t|\t %-15d \t|\t %-15d\n", int(left_detect), int(right_detect));
-  */
 }
 
 bool isTimeout(){
@@ -246,15 +268,21 @@ bool isClear(){
 
 int dbl = 0;
 int dblp = 0;
+
+/*  
+  Dual --> A
+  Flickering + bi-direction --> Y
+*/
+
 void loop()
 {
   if(PUTTY_DEBUG)CLEAR_SCREEN();
   
   // Poll both sensors for new data
   bool bleft = pollSensor(tofl, datal);
-  delay(10);
+  //delay(10);
   bool bright = pollSensor(tofr, datar);
-  if(!bleft && !bright) return;
+  if(!bleft || !bright) return;
 
   // Count cells
   countCells(bleft, bright);
@@ -268,13 +296,17 @@ void loop()
   bool IN   = LIN  || RIN;
 
 
-  dbl = 0;
+  //dbl = 0;
+  bool tl = false;
+  bool tr = false;
   switch(state){
     // Default IDLE state
     case IDLE:
       digitalWrite(LED_PIN, LOW);
-      state = OUT ? ENTER_P : IN ? EXIT_P : IDLE;
-      dblp = (cell_active[L_INS] && cell_active[R_INS]) || (cell_active[L_OUTS] && cell_active[R_OUTS]); 
+      state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      dblp = (cell_active[L_INS] || cell_active[R_INS]) || (cell_active[L_OUTS] || cell_active[R_OUTS]); 
+      //tl = cell_active[L_INS] || cell_active[L_OUTS];
+      //tr = cell_active[R_INS] || cell_active[R_OUTS];
       state_start = millis();
       break;
 
@@ -299,7 +331,7 @@ void loop()
         --counter;
         state = CLEAR;
         
-        if(dblp && (cell_active[L_OUTS] || cell_active[R_OUTS])){
+        if(dblp){// && (cell_active[L_OUTS] || cell_active[R_OUTS])){
           --counter;
           dbl = 1;
         }
@@ -312,6 +344,8 @@ void loop()
     case CLEAR:
       if(!IN && !OUT && isClear() || isTimeout()){
         state = IDLE;
+        dbl = 0;
+        dblp = 0;
         digitalWrite(LED_PIN, LOW);
       }
       break;
