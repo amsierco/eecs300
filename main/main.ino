@@ -20,10 +20,22 @@
 #define PUTTY_DEBUG false
 #define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
 
-unsigned long state_start = 0;              // ms
-const unsigned long TIMEOUT = 2000;         // ms
-const unsigned long debounce_thresh = 5;  //ms
-const unsigned long clear_thresh = 1500;    //ms
+
+/*****************************|
+      Physical Parameter
+|*****************************/
+unsigned long state_start           = 0;      // ms
+const unsigned long TIMEOUT         = 2000;   // ms
+const unsigned long debounce_thresh = 5;      // ms
+const unsigned long clear_thresh    = 1500;   // ms
+const unsigned long measure_thresh  = 10;     // ms
+#define dist_threshold 900                    // mm
+#define active_threshold 3                    // How many zones required to trigger a detection 
+#define sbs_active_threshold 3                // Side-By-Side zone threshold
+
+// Detection booleans
+bool LOUT, LIN, ROUT, RIN, LOUTS, LINS, ROUTS, RINS, OUT, IN = false;
+bool _LOUT, _LIN, _ROUT, _RIN, _LOUTS, _LINS, _ROUTS, _RINS, _OUT, _IN = false;
 
 
 // State Machine
@@ -58,20 +70,13 @@ VL53L5CX_ResultsData datal;
 SparkFun_VL53L5CX tofr;
 VL53L5CX_ResultsData datar;
 
-// Software Defines & Globals
-int counter = 0;              // Primary In/Out counter
-#define dist_threshold 900    // mm
-#define active_threshold 3    // How many zones required to trigger a detection 
-#define sbs_active_threshold 3 // Side-By-Side zone threshold
+int counter = 0;  // Primary In/Out counter
+
 //16.5cm
 void setup()
 {
   Serial.begin(921600);
-    
-  //watchdog timer with 5s period
-  //esp_task_wdt_init(5, true); // Enable watchdog (which will restart ESP32 if it hangs)
-  //esp_task_wdt_add(NULL);     // Add current thread to WDT watch
-  
+
   pinMode(LED_PIN, OUTPUT);
 
   delay(1000);
@@ -153,41 +158,22 @@ bool pollSensor(SparkFun_VL53L5CX &sens, VL53L5CX_ResultsData &buf)
   return false;
 }
 
-void debug() {
-  if (tofl.isDataReady() == true)
-  {
-    if (tofl.getRangingData(&datal))
-    {
-      for (int y = 0 ; y <= image_width * (image_width - 1) ; y += image_width)
-      {
-        for (int x = image_width - 1 ; x >= 0 ; x--)
-        {
-          Serial.print("\t");
-          Serial.print(datal.distance_mm[x + y]);
-        }
-        Serial.println();
-      }
-      Serial.println();
-    }
-  }
-}
-
 bool meetsThresh(int i, VL53L5CX_ResultsData &buf)
 {
   return buf.distance_mm[i] > 0 && buf.distance_mm[i] <= dist_threshold;
 }
 
-void countCells(bool bleft, bool bright)
+void countCells()
 {
   for (int i = 0; i < 8; i++) {
     cell_counts[i] = 0;
-    cell_active[i] = false;
+    //cell_active[i] = false;
   }
   
 
-  for(int i=0; i < image_resolution; i++){ // Loop all 64 cells
-    int col = i % image_width; // Calculates current column
-    int row = i / 8;           // Calculates curren row
+  for(int i=0; i < image_resolution; i++){  // Loop all 64 cells
+    int col = i % image_width;              // Calculates current column
+    int row = i / 8;                        // Calculates curren row
     
     // Determine Left Cell Type
     CellType cell_l;
@@ -237,9 +223,8 @@ void countCells(bool bleft, bool bright)
   */
 
     // Update respective counts
-    if(meetsThresh(i, datal) && bleft) cell_counts[cell_l] += 1;
-    if(meetsThresh(i, datar) && bright) cell_counts[cell_r] += 1;
-
+    if(meetsThresh(i, datal)) cell_counts[cell_l] += 1;
+    if(meetsThresh(i, datar)) cell_counts[cell_r] += 1;
   }
 
   // Update active cells
@@ -249,6 +234,18 @@ void countCells(bool bleft, bool bright)
       cell_active[i] = cell_counts[i] >= sbs_active_threshold;
     }
   }
+
+  // Boolean update
+  LOUTS= cell_active[L_OUTS];
+  LINS = cell_active[L_INS];
+  ROUTS= cell_active[R_OUTS];
+  RINS = cell_active[R_INS];
+  LOUT = cell_active[L_OUTB] || cell_active[L_OUTS];
+  LIN  = cell_active[L_INB]  || cell_active[L_INS];
+  ROUT = cell_active[R_OUTB] || cell_active[R_OUTS];
+  RIN  = cell_active[R_INB]  || cell_active[R_INS];
+  OUT  = LOUT || ROUT;
+  IN   = LIN  || RIN;
 
   Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
   Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\r", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
@@ -266,13 +263,55 @@ bool isClear(){
   return millis() - state_start > clear_thresh;
 }
 
+bool delayedMeasure() {
+
+  /*****************************|
+        First Poll
+  |*****************************/
+  bool bleft = pollSensor(tofl, datal);
+  bool bright = pollSensor(tofr, datar);
+  if(!bleft || !bright) {Serial.println("No new data"); return false;}
+
+  state_start = millis();
+  countCells();
+  _LOUT=LOUT;
+  _LIN=LIN;
+  _ROUT=ROUT;
+  _RIN=RIN;
+  _LINS=LINS;
+  _LOUTS=LOUTS;
+  _RINS=RINS;
+  _ROUTS=ROUTS;
+  _OUT=OUT;
+  _IN=IN;
+  digitalWrite(LED_PIN, 1);
+  while(!metTimeThresh(state_start, measure_thresh));
+
+  /*****************************|
+        Second Poll
+  |*****************************/
+  pollSensor(tofl, datal);
+  pollSensor(tofr, datar);
+  digitalWrite(LED_PIN, 0);
+  countCells();
+  LOUT |= _LOUT;
+  LIN |= _LIN;
+  ROUT |= _ROUT;
+  RIN |= _RIN;
+  OUT |= _OUT;
+  IN |= _IN;
+  LOUTS |= _LOUTS;
+  ROUTS |= _ROUTS;
+  LINS |= _LINS;
+  RINS |= _RINS;
+
+  return true;
+}
+
+bool metTimeThresh(unsigned long ref, unsigned long thresh) {return millis() - ref > thresh;}
+
 int dbl = 0;
 int dblp = 0;
-
-/*  
-  Dual --> A
-  Flickering + bi-direction --> Y
-*/
 
 void loop()
 {
@@ -280,44 +319,31 @@ void loop()
   
   // Poll both sensors for new data
   bool bleft = pollSensor(tofl, datal);
-  //delay(10);
   bool bright = pollSensor(tofr, datar);
-  if(!bleft || !bright) return;
+  if(!bleft || !bright) {Serial.println("No new data"); return;}
 
-  // Count cells
-  countCells(bleft, bright);
+  /// Delayed Measurements ///
+  if(!delayedMeasure()) return;
   
-  // FSM state merging
-  bool LOUT = cell_active[L_OUTB] || cell_active[L_OUTS];
-  bool LIN  = cell_active[L_INB]  || cell_active[L_INS];
-  bool ROUT = cell_active[R_OUTB] || cell_active[R_OUTS];
-  bool RIN  = cell_active[R_INB]  || cell_active[R_INS];
-  bool OUT  = LOUT || ROUT;
-  bool IN   = LIN  || RIN;
-
-
-  //dbl = 0;
-  bool tl = false;
-  bool tr = false;
   switch(state){
-    // Default IDLE state
+    /*****************************|
+          Default IDLE state
+    |*****************************/
     case IDLE:
-      digitalWrite(LED_PIN, LOW);
       state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
-      dblp = (cell_active[L_INS] || cell_active[R_INS]) || (cell_active[L_OUTS] || cell_active[R_OUTS]); 
-      //tl = cell_active[L_INS] || cell_active[L_OUTS];
-      //tr = cell_active[R_INS] || cell_active[R_OUTS];
+      dblp = (LINS && RINS) || (LOUTS && ROUTS);
       state_start = millis();
       break;
 
-    // Door Enter Pending
+    /*****************************|
+            Enter Pending
+    |*****************************/
     case ENTER_P:
-      digitalWrite(LED_PIN, HIGH);
       if(IN && isDebounce()) {
         ++counter;
         state = CLEAR;
         
-        if(dblp && (cell_active[L_INS] || cell_active[R_INS])){
+        if(dblp && (LINS && RINS)){
           ++counter;
           dbl = 1;
         }
@@ -325,13 +351,15 @@ void loop()
       if(isTimeout()) state = IDLE;
       break;
 
-    // Door Exit Pending
+    /*****************************|
+            Exit Pending
+    |*****************************/
     case EXIT_P:
       if(OUT && isDebounce()) {
         --counter;
         state = CLEAR;
         
-        if(dblp){// && (cell_active[L_OUTS] || cell_active[R_OUTS])){
+        if(dblp && (LOUTS && ROUTS)){
           --counter;
           dbl = 1;
         }
@@ -340,15 +368,17 @@ void loop()
       if(isTimeout()) state = IDLE;
       break;
 
-    // Door Trigger Clear
+    /*****************************|
+          Clear Waiting Area
+    |*****************************/
     case CLEAR:
-      if(!IN && !OUT && isClear() || isTimeout()){
+      if(isClear()){
         state = IDLE;
         dbl = 0;
         dblp = 0;
-        digitalWrite(LED_PIN, LOW);
       }
       break;
   }
+
   Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\n\r", counter, state, dbl, dblp);
 }
