@@ -14,6 +14,7 @@
 #define image_width 8         // Row of TOF image resolution
 #define ranging_freq 15       // Ranging freq
 #define LED_PIN 2
+#define repoll_attempts 3     // How many time it tries to re-poll data
 
 // Debugging
 #define I2C_DEBUG false
@@ -27,11 +28,13 @@
 unsigned long state_start           = 0;      // ms
 const unsigned long TIMEOUT         = 2000;   // ms
 const unsigned long debounce_thresh = 5;      // ms
-const unsigned long clear_thresh    = 1500;   // ms
+const unsigned long clear_thresh    = 250;    // ms
 const unsigned long measure_thresh  = 10;     // ms
-#define dist_threshold 900                    // mm
-#define active_threshold 3                    // How many zones required to trigger a detection 
-#define sbs_active_threshold 3                // Side-By-Side zone threshold
+#define dist_threshold 600                    // mm
+#define active_threshold 12                   // How many zones required to trigger a detection 
+#define sbs_active_threshold 2                // Side-By-Side zone threshold
+
+bool ptr = true;
 
 // Detection booleans
 bool LOUT, LIN, ROUT, RIN, LOUTS, LINS, ROUTS, RINS, OUT, IN = false;
@@ -40,10 +43,10 @@ bool _LOUT, _LIN, _ROUT, _RIN, _LOUTS, _LINS, _ROUTS, _RINS, _OUT, _IN = false;
 
 // State Machine
 enum CrossState {
-  IDLE,
-  ENTER_P,
-  EXIT_P,
-  CLEAR
+  IDLE,     // 0
+  ENTER_P,  // 1
+  EXIT_P,   // 2
+  CLEAR     // 3
 };
 CrossState state = IDLE;
 
@@ -167,7 +170,7 @@ void countCells()
 {
   for (int i = 0; i < 8; i++) {
     cell_counts[i] = 0;
-    //cell_active[i] = false;
+    cell_active[i] = false;
   }
   
 
@@ -178,7 +181,7 @@ void countCells()
     // Determine Left Cell Type
     CellType cell_l;
     CellType cell_r;
-    if(col >= 0 && col <= 0 && row >= 0 && row <= 3) {
+    /*if(col >= 0 && col <= 0 && row >= 0 && row <= 3) {
       cell_l = L_INS;
     } else if (col >= 0 && col <= 0 && row >= 3 && row <= 7){
       cell_l = L_OUTS;
@@ -197,10 +200,10 @@ void countCells()
       cell_r = R_INS;
     } else if (col >= 6 && col <= 7 && row >= 3 && row <= 7){
       cell_r = R_OUTS;
-    }
+    }*/
 
-  /*
-      if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
+  
+    if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
       cell_l = L_INS;
     } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
       cell_l = L_OUTS;
@@ -210,7 +213,7 @@ void countCells()
       cell_l = L_OUTB;
     }
     
-    // Determine Left Cell Type
+    // Determine Right Cell Type
     if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
       cell_r = R_INB;
     } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
@@ -220,7 +223,30 @@ void countCells()
     } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
       cell_r = R_OUTS;
     }
-  */
+    
+    /*
+    // Determine Left 4x4 Cell Type
+    if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
+      cell_l = L_INS;
+    } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
+      cell_l = L_OUTS;
+    } else if (col >= 2 && col <= 7 && row >= 0 && row <= 3){
+      cell_l = L_INB;
+    } else if (col >= 2 && col <= 7 && row >= 3 && row <= 7){
+      cell_l = L_OUTB;
+    }
+    
+    // Determine Right 4x4 Cell Type
+    if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
+      cell_r = R_INB;
+    } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
+      cell_r = R_OUTB;
+    } else if (col >= 5 && col <= 7 && row >= 0 && row <= 3){
+      cell_r = R_INS;
+    } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
+      cell_r = R_OUTS;
+    }*/
+  
 
     // Update respective counts
     if(meetsThresh(i, datal)) cell_counts[cell_l] += 1;
@@ -247,8 +273,11 @@ void countCells()
   OUT  = LOUT || ROUT;
   IN   = LIN  || RIN;
 
+  if(ptr) {
   Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
   Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\r", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
+  ptr = false;
+  }
 }
 
 bool isTimeout(){
@@ -256,23 +285,35 @@ bool isTimeout(){
 }
 
 bool isDebounce(){
-  return millis() - state_start > debounce_thresh;
+  return true;//millis() - state_start > debounce_thresh;
 }
 
 bool isClear(){
   return millis() - state_start > clear_thresh;
 }
 
+
+bool pollBothSensors() {
+  for (int i = 0; i < repoll_attempts; ++i) {
+    if (pollSensor(tofl, datal) && pollSensor(tofr, datar))
+      return true;
+    delay(2);
+  }
+  return false;
+}
+
+
 bool delayedMeasure() {
 
   /*****************************|
         First Poll
   |*****************************/
-  bool bleft = pollSensor(tofl, datal);
-  bool bright = pollSensor(tofr, datar);
-  if(!bleft || !bright) {Serial.println("No new data"); return false;}
+  // bool bleft  = pollSensor(tofl, datal);
+  // bool bright = pollSensor(tofr, datar);
+  // if(!bleft || !bright) {return false;}
+  pollBothSensors();
 
-  state_start = millis();
+  unsigned long mes_start = millis();
   countCells();
   _LOUT=LOUT;
   _LIN=LIN;
@@ -284,27 +325,31 @@ bool delayedMeasure() {
   _ROUTS=ROUTS;
   _OUT=OUT;
   _IN=IN;
-  digitalWrite(LED_PIN, 1);
-  while(!metTimeThresh(state_start, measure_thresh));
+  //digitalWrite(LED_PIN, 1);
+  while(!metTimeThresh(mes_start, measure_thresh));
 
   /*****************************|
         Second Poll
   |*****************************/
-  pollSensor(tofl, datal);
-  pollSensor(tofr, datar);
-  digitalWrite(LED_PIN, 0);
+  // bleft  = pollSensor(tofl, datal);
+  // bright = pollSensor(tofr, datar);
+  //digitalWrite(LED_PIN, 0);
+  // if(!bleft || !bright) {return false;}
+  pollBothSensors();
+  
   countCells();
-  LOUT |= _LOUT;
-  LIN |= _LIN;
-  ROUT |= _ROUT;
-  RIN |= _RIN;
-  OUT |= _OUT;
-  IN |= _IN;
+  LOUT  |= _LOUT;
+  LIN   |= _LIN;
+  ROUT  |= _ROUT;
+  RIN   |= _RIN;
+  OUT   |= _OUT;
+  IN    |= _IN;
   LOUTS |= _LOUTS;
   ROUTS |= _ROUTS;
-  LINS |= _LINS;
-  RINS |= _RINS;
+  LINS  |= _LINS;
+  RINS  |= _RINS;
 
+  ptr = true;
   return true;
 }
 
@@ -314,14 +359,9 @@ int dbl = 0;
 int dblp = 0;
 
 void loop()
-{
+{ 
+  //delay(50);
   if(PUTTY_DEBUG)CLEAR_SCREEN();
-  
-  // Poll both sensors for new data
-  bool bleft = pollSensor(tofl, datal);
-  bool bright = pollSensor(tofr, datar);
-  if(!bleft || !bright) {Serial.println("No new data"); return;}
-
   /// Delayed Measurements ///
   if(!delayedMeasure()) return;
   
@@ -332,6 +372,11 @@ void loop()
     case IDLE:
       state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
       dblp = (LINS && RINS) || (LOUTS && ROUTS);
+      if(dblp){
+        digitalWrite(LED_PIN, 1);
+      } else {
+        digitalWrite(LED_PIN, 0);
+      }
       state_start = millis();
       break;
 
@@ -339,14 +384,15 @@ void loop()
             Enter Pending
     |*****************************/
     case ENTER_P:
-      if(IN && isDebounce()) {
+      if(IN){// && isDebounce()) {
         ++counter;
         state = CLEAR;
         
-        if(dblp && (LINS && RINS)){
+        if(dblp && (LINS || RINS)){
           ++counter;
           dbl = 1;
         }
+        state_start = millis();
       }
       if(isTimeout()) state = IDLE;
       break;
@@ -355,14 +401,15 @@ void loop()
             Exit Pending
     |*****************************/
     case EXIT_P:
-      if(OUT && isDebounce()) {
+      if(OUT){// && isDebounce()) {
         --counter;
         state = CLEAR;
         
-        if(dblp && (LOUTS && ROUTS)){
+        if(dblp && (LOUTS || ROUTS)){
           --counter;
           dbl = 1;
         }
+        state_start = millis();
       } 
       
       if(isTimeout()) state = IDLE;
@@ -372,7 +419,7 @@ void loop()
           Clear Waiting Area
     |*****************************/
     case CLEAR:
-      if(isClear()){
+      if(isClear() || isTimeout()){
         state = IDLE;
         dbl = 0;
         dblp = 0;
@@ -380,5 +427,5 @@ void loop()
       break;
   }
 
-  Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\n\r", counter, state, dbl, dblp);
+  Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\r", counter, state, dbl, dblp);
 }
