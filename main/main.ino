@@ -26,13 +26,13 @@
       Physical Parameter
 |*****************************/
 unsigned long state_start           = 0;      // ms
-const unsigned long TIMEOUT         = 2000;   // ms
+const unsigned long TIMEOUT         = 500;   // ms
 const unsigned long debounce_thresh = 5;      // ms
 const unsigned long clear_thresh    = 250;    // ms
 const unsigned long measure_thresh  = 10;     // ms
-#define dist_threshold 600                    // mm
+#define dist_threshold 800                    // mm
 #define active_threshold 12                   // How many zones required to trigger a detection 
-#define sbs_active_threshold 2                // Side-By-Side zone threshold
+#define sbs_active_threshold 3                // Side-By-Side zone threshold
 
 bool ptr = true;
 
@@ -372,11 +372,6 @@ void loop()
     case IDLE:
       state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
       dblp = (LINS && RINS) || (LOUTS && ROUTS);
-      if(dblp){
-        digitalWrite(LED_PIN, 1);
-      } else {
-        digitalWrite(LED_PIN, 0);
-      }
       state_start = millis();
       break;
 
@@ -427,5 +422,10 @@ void loop()
       break;
   }
 
+  if(dbl){
+    digitalWrite(LED_PIN, 1);
+    delay(100);
+    digitalWrite(LED_PIN, 0);
+  }
   Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\r", counter, state, dbl, dblp);
 }
