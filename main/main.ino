@@ -21,15 +21,14 @@
 #define PUTTY_DEBUG false
 #define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
 
-
 /*****************************|
       Physical Parameter
 |*****************************/
 unsigned long state_start           = 0;      // ms
-const unsigned long TIMEOUT         = 500;   // ms
+const unsigned long TIMEOUT         = 500;    // ms
 const unsigned long debounce_thresh = 5;      // ms
 const unsigned long clear_thresh    = 250;    // ms
-const unsigned long measure_thresh  = 10;     // ms
+const unsigned long measure_thresh  = 200;    // ms (was 10)
 #define dist_threshold 800                    // mm
 #define active_threshold 12                   // How many zones required to trigger a detection 
 #define sbs_active_threshold 3                // Side-By-Side zone threshold
@@ -40,13 +39,13 @@ bool ptr = true;
 bool LOUT, LIN, ROUT, RIN, LOUTS, LINS, ROUTS, RINS, OUT, IN = false;
 bool _LOUT, _LIN, _ROUT, _RIN, _LOUTS, _LINS, _ROUTS, _RINS, _OUT, _IN = false;
 
-
 // State Machine
 enum CrossState {
   IDLE,     // 0
   ENTER_P,  // 1
   EXIT_P,   // 2
-  CLEAR     // 3
+  CLEAR,    // 3
+  BIDIR_P     // 4
 };
 CrossState state = IDLE;
 
@@ -64,6 +63,8 @@ enum CellType {
 
 int  cell_counts[8];
 bool cell_active[8];
+int dbl = 0;
+int dblp = 0;
 
 // Left TOF Sensor
 SparkFun_VL53L5CX tofl;
@@ -178,31 +179,33 @@ void countCells()
     int col = i % image_width;              // Calculates current column
     int row = i / 8;                        // Calculates curren row
     
-    // Determine Left Cell Type
     CellType cell_l;
     CellType cell_r;
-    /*if(col >= 0 && col <= 0 && row >= 0 && row <= 3) {
+    
+    // Determine Left 8x8 Cell Type w/o middle
+    if(col >= 0 && col <= 1 && row >= 0 && row <= 2) {
       cell_l = L_INS;
-    } else if (col >= 0 && col <= 0 && row >= 3 && row <= 7){
+    } else if (col >= 0 && col <= 1 && row >= 5 && row <= 7){
       cell_l = L_OUTS;
-    } else if (col >= 1 && col <= 7 && row >= 0 && row <= 3){
+    } else if (col >= 2 && col <= 7 && row >= 0 && row <= 2){
       cell_l = L_INB;
-    } else if (col >= 1 && col <= 7 && row >= 3 && row <= 7){
+    } else if (col >= 2 && col <= 7 && row >= 5 && row <= 7){
       cell_l = L_OUTB;
     }
     
-    // Determine Left Cell Type
-    if(col >= 0 && col <= 6 && row >= 0 && row <= 3) {
+    // Determine Right 8x8 Cell  w/o middle
+    if(col >= 0 && col <= 5 && row >= 0 && row <= 2) {
       cell_r = R_INB;
-    } else if (col >= 0 && col <= 6 && row >= 3 && row <= 7){
+    } else if (col >= 0 && col <= 5 && row >= 5 && row <= 7){
       cell_r = R_OUTB;
-    } else if (col >= 6 && col <= 7 && row >= 0 && row <= 3){
+    } else if (col >= 5 && col <= 7 && row >= 0 && row <= 2){
       cell_r = R_INS;
-    } else if (col >= 6 && col <= 7 && row >= 3 && row <= 7){
+    } else if (col >= 5 && col <= 7 && row >= 5 && row <= 7){
       cell_r = R_OUTS;
-    }*/
+    }
 
-  
+    /*
+    // Determine Left 8x8 Cell Type
     if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
       cell_l = L_INS;
     } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
@@ -213,7 +216,7 @@ void countCells()
       cell_l = L_OUTB;
     }
     
-    // Determine Right Cell Type
+    // Determine Right 8x8 Cell Type
     if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
       cell_r = R_INB;
     } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
@@ -223,7 +226,8 @@ void countCells()
     } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
       cell_r = R_OUTS;
     }
-    
+    */
+
     /*
     // Determine Left 4x4 Cell Type
     if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
@@ -292,7 +296,6 @@ bool isClear(){
   return millis() - state_start > clear_thresh;
 }
 
-
 bool pollBothSensors() {
   for (int i = 0; i < repoll_attempts; ++i) {
     if (pollSensor(tofl, datal) && pollSensor(tofr, datar))
@@ -302,19 +305,14 @@ bool pollBothSensors() {
   return false;
 }
 
-
 bool delayedMeasure() {
-
   /*****************************|
         First Poll
   |*****************************/
-  // bool bleft  = pollSensor(tofl, datal);
-  // bool bright = pollSensor(tofr, datar);
-  // if(!bleft || !bright) {return false;}
   pollBothSensors();
-
-  unsigned long mes_start = millis();
   countCells();
+  unsigned long mes_start = millis();
+
   _LOUT=LOUT;
   _LIN=LIN;
   _ROUT=ROUT;
@@ -325,19 +323,15 @@ bool delayedMeasure() {
   _ROUTS=ROUTS;
   _OUT=OUT;
   _IN=IN;
-  //digitalWrite(LED_PIN, 1);
+
   while(!metTimeThresh(mes_start, measure_thresh));
 
   /*****************************|
         Second Poll
   |*****************************/
-  // bleft  = pollSensor(tofl, datal);
-  // bright = pollSensor(tofr, datar);
-  //digitalWrite(LED_PIN, 0);
-  // if(!bleft || !bright) {return false;}
   pollBothSensors();
-  
   countCells();
+
   LOUT  |= _LOUT;
   LIN   |= _LIN;
   ROUT  |= _ROUT;
@@ -355,14 +349,14 @@ bool delayedMeasure() {
 
 bool metTimeThresh(unsigned long ref, unsigned long thresh) {return millis() - ref > thresh;}
 
-int dbl = 0;
-int dblp = 0;
-
 void loop()
 { 
-  //delay(50);
+
   if(PUTTY_DEBUG)CLEAR_SCREEN();
-  /// Delayed Measurements ///
+
+  /*****************************|
+          TOF Measurement
+  |*****************************/
   if(!delayedMeasure()) return;
   
   switch(state){
@@ -370,16 +364,33 @@ void loop()
           Default IDLE state
     |*****************************/
     case IDLE:
-      state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+      
+      if ((LIN && ROUT) || (LOUT && RIN)){  state = BIDIR_P;}
+      else if (IN && OUT){                  state = IDLE;}
+      else if (OUT){                        state = ENTER_P;}
+      else if (IN){                         state = EXIT_P;}
+      else {                                state = IDLE;}
+      //state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
       dblp = (LINS && RINS) || (LOUTS && ROUTS);
       state_start = millis();
+      break;
+
+    /*****************************|
+         Bi-Directional Movement
+    |*****************************/
+    case BIDIR_P:
+      if((LIN && ROUT) || (LOUT && RIN)){
+        state = CLEAR;
+        state_start = millis();
+      }
+      if(isTimeout()) state = IDLE;
       break;
 
     /*****************************|
             Enter Pending
     |*****************************/
     case ENTER_P:
-      if(IN){// && isDebounce()) {
+      if(IN){
         ++counter;
         state = CLEAR;
         
@@ -396,7 +407,7 @@ void loop()
             Exit Pending
     |*****************************/
     case EXIT_P:
-      if(OUT){// && isDebounce()) {
+      if(OUT){
         --counter;
         state = CLEAR;
         
