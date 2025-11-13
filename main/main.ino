@@ -18,20 +18,17 @@
 
 // Debugging
 #define I2C_DEBUG false
-#define PUTTY_DEBUG false
-#define CLEAR_SCREEN() Serial.write("\033[2J\033[H")
 
 /*****************************|
       Physical Parameter
 |*****************************/
 unsigned long state_start           = 0;      // ms
 const unsigned long TIMEOUT         = 500;    // ms
-const unsigned long debounce_thresh = 5;      // ms
 const unsigned long clear_thresh    = 250;    // ms
-const unsigned long measure_thresh  = 200;    // ms (was 10)
-#define dist_threshold 800                    // mm
-#define active_threshold 12                   // How many zones required to trigger a detection 
-#define sbs_active_threshold 3                // Side-By-Side zone threshold
+const unsigned long measure_thresh  = 15;    // ms (20ms is promising)
+#define dist_threshold 900                    // mm 
+#define active_threshold 10                    // How many zones required to trigger a detection
+#define sbs_active_threshold 4                // Side-By-Side zone threshold
 
 bool ptr = true;
 
@@ -45,7 +42,7 @@ enum CrossState {
   ENTER_P,  // 1
   EXIT_P,   // 2
   CLEAR,    // 3
-  BIDIR_P     // 4
+  BIDIR_P   // 4
 };
 CrossState state = IDLE;
 
@@ -76,7 +73,60 @@ VL53L5CX_ResultsData datar;
 
 int counter = 0;  // Primary In/Out counter
 
-//16.5cm
+////////////////////////////////
+
+// Left Inner Baseline
+const int l_in_b_c_min = 2;
+const int l_in_b_c_max = 7;
+const int l_in_b_r_min = 0;
+const int l_in_b_r_max = 1;
+
+// Left Outer Baseline
+const int l_out_b_c_min = 2;
+const int l_out_b_c_max = 7;
+const int l_out_b_r_min = 6;
+const int l_out_b_r_max = 7;
+
+// Left Inner Edge Case
+const int l_in_e_c_min = 0;
+const int l_in_e_c_max = 1;
+const int l_in_e_r_min = 0;
+const int l_in_e_r_max = 1;
+
+// Left Outer Edge Case
+const int l_out_e_c_min = 0;
+const int l_out_e_c_max = 1;
+const int l_out_e_r_min = 6;
+const int l_out_e_r_max = 7;
+
+////////////////////////////////
+
+// Right Inner Baseline
+const int r_in_b_c_min = 0;
+const int r_in_b_c_max = 5;
+const int r_in_b_r_min = 0;
+const int r_in_b_r_max = 1;
+
+// Right Outer Baseline
+const int r_out_b_c_min = 0;
+const int r_out_b_c_max = 5;
+const int r_out_b_r_min = 6;
+const int r_out_b_r_max = 7;
+
+// Right Inner Edge Case
+const int r_in_e_c_min = 6;
+const int r_in_e_c_max = 7;
+const int r_in_e_r_min = 0;
+const int r_in_e_r_max = 1;
+
+// Right Outer Edge Case
+const int r_out_e_c_min = 6;
+const int r_out_e_c_max = 7;
+const int r_out_e_r_min = 6;
+const int r_out_e_r_max = 7;
+
+////////////////////////////////
+
 void setup()
 {
   Serial.begin(921600);
@@ -155,14 +205,14 @@ void setup()
   Serial.println("- - - - - - - - - - Initialization complete, starting counter - - - - - - - - - - ");
 }
 
-bool pollSensor(SparkFun_VL53L5CX &sens, VL53L5CX_ResultsData &buf)
+inline bool pollSensor(SparkFun_VL53L5CX &sens, VL53L5CX_ResultsData &buf)
 {
   if(!sens.isDataReady()) return false;
   if(sens.getRangingData(&buf)) return true;
   return false;
 }
 
-bool meetsThresh(int i, VL53L5CX_ResultsData &buf)
+inline bool meetsThresh(int i, VL53L5CX_ResultsData &buf)
 {
   return buf.distance_mm[i] > 0 && buf.distance_mm[i] <= dist_threshold;
 }
@@ -174,14 +224,35 @@ void countCells()
     cell_active[i] = false;
   }
   
-
   for(int i=0; i < image_resolution; i++){  // Loop all 64 cells
     int col = i % image_width;              // Calculates current column
     int row = i / 8;                        // Calculates curren row
     
     CellType cell_l;
     CellType cell_r;
+    // Determine Left 8x8 Cell Type w/o middle
+    if        (col >= l_in_e_c_min && col <= l_in_e_c_max && row >= l_in_e_r_min && row <= l_in_e_r_max) {
+      cell_l = L_INS;
+    } else if (col >= l_out_e_c_min && col <= l_out_e_c_max && row >= l_out_e_r_min && row <= l_out_e_r_max){
+      cell_l = L_OUTS;
+    } else if (col >= l_in_b_c_min && col <= l_in_b_c_max && row >= l_in_b_r_min && row <= l_in_b_r_max){
+      cell_l = L_INB;
+    } else if (col >= l_out_b_c_min && col <= l_out_b_c_max && row >= l_out_b_r_min && row <= l_out_b_r_max){
+      cell_l = L_OUTB;
+    }
     
+    // Determine Right 8x8 Cell  w/o middle
+    if        (col >= r_in_b_c_min && col <= r_in_b_c_max && row >= r_in_b_r_min && row <= r_in_b_r_max) {
+      cell_r = R_INB;
+    } else if (col >= r_out_b_c_min && col <= r_out_b_c_max && row >= r_out_b_r_min && row <= r_out_b_r_max){
+      cell_r = R_OUTB;
+    } else if (col >= r_in_e_c_min && col <= r_in_e_c_max && row >= r_in_e_r_min && row <= r_in_e_r_max){
+      cell_r = R_INS;
+    } else if (col >= r_out_e_c_min && col <= r_out_e_c_max && row >= r_out_e_r_min && row <= r_out_e_r_max){
+      cell_r = R_OUTS;
+    }
+
+    /*
     // Determine Left 8x8 Cell Type w/o middle
     if(col >= 0 && col <= 1 && row >= 0 && row <= 2) {
       cell_l = L_INS;
@@ -202,7 +273,7 @@ void countCells()
       cell_r = R_INS;
     } else if (col >= 5 && col <= 7 && row >= 5 && row <= 7){
       cell_r = R_OUTS;
-    }
+    }*/
 
     /*
     // Determine Left 8x8 Cell Type
@@ -284,19 +355,19 @@ void countCells()
   }
 }
 
-bool isTimeout(){
+inline bool isTimeout(){
   return millis() - state_start > TIMEOUT;
 }
 
-bool isDebounce(){
-  return true;//millis() - state_start > debounce_thresh;
-}
-
-bool isClear(){
+inline bool isClear(){
   return millis() - state_start > clear_thresh;
 }
 
-bool pollBothSensors() {
+inline bool pollBothSensors() {
+  pollSensor(tofl, datal);
+  pollSensor(tofr, datar);
+  return true;
+  
   for (int i = 0; i < repoll_attempts; ++i) {
     if (pollSensor(tofl, datal) && pollSensor(tofr, datar))
       return true;
@@ -307,7 +378,7 @@ bool pollBothSensors() {
 
 bool delayedMeasure() {
   /*****************************|
-        First Poll
+            First Poll
   |*****************************/
   pollBothSensors();
   countCells();
@@ -347,17 +418,14 @@ bool delayedMeasure() {
   return true;
 }
 
-bool metTimeThresh(unsigned long ref, unsigned long thresh) {return millis() - ref > thresh;}
+inline bool metTimeThresh(unsigned long ref, unsigned long thresh) {return millis() - ref > thresh;}
 
 void loop()
 { 
-
-  if(PUTTY_DEBUG)CLEAR_SCREEN();
-
   /*****************************|
           TOF Measurement
   |*****************************/
-  if(!delayedMeasure()) return;
+  delayedMeasure();
   
   switch(state){
     /*****************************|
@@ -365,12 +433,12 @@ void loop()
     |*****************************/
     case IDLE:
       
-      if ((LIN && ROUT) || (LOUT && RIN)){  state = BIDIR_P;}
+      if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
       else if (IN && OUT){                  state = IDLE;}
       else if (OUT){                        state = ENTER_P;}
       else if (IN){                         state = EXIT_P;}
       else {                                state = IDLE;}
-      //state = IN && OUT ? IDLE: OUT ? ENTER_P : IN ? EXIT_P : IDLE;
+
       dblp = (LINS && RINS) || (LOUTS && ROUTS);
       state_start = millis();
       break;
@@ -425,7 +493,7 @@ void loop()
           Clear Waiting Area
     |*****************************/
     case CLEAR:
-      if(isClear() || isTimeout()){
+      if(isClear()){
         state = IDLE;
         dbl = 0;
         dblp = 0;
