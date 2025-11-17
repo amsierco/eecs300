@@ -15,6 +15,7 @@
 #define ranging_freq 15       // Ranging freq
 #define LED_PIN 2
 #define repoll_attempts 3     // How many time it tries to re-poll data
+#define repoll 5
 
 // Debugging
 #define I2C_DEBUG false
@@ -27,7 +28,7 @@ const unsigned long TIMEOUT         = 500;    // ms
 const unsigned long clear_thresh    = 250;    // ms
 const unsigned long measure_thresh  = 15;    // ms (20ms is promising)
 #define dist_threshold 900                    // mm 
-#define active_threshold 10                    // How many zones required to trigger a detection
+#define active_threshold 5                    // How many zones required to trigger a detection
 #define sbs_active_threshold 4                // Side-By-Side zone threshold
 
 bool ptr = true;
@@ -35,6 +36,8 @@ bool ptr = true;
 // Detection booleans
 bool LOUT, LIN, ROUT, RIN, LOUTS, LINS, ROUTS, RINS, OUT, IN = false;
 bool _LOUT, _LIN, _ROUT, _RIN, _LOUTS, _LINS, _ROUTS, _RINS, _OUT, _IN = false;
+int cell_acc[8];
+
 
 // State Machine
 enum CrossState {
@@ -91,12 +94,12 @@ const int l_out_b_r_max = 7;
 const int l_in_e_c_min = 0;
 const int l_in_e_c_max = 1;
 const int l_in_e_r_min = 0;
-const int l_in_e_r_max = 1;
+const int l_in_e_r_max = 3;
 
 // Left Outer Edge Case
 const int l_out_e_c_min = 0;
 const int l_out_e_c_max = 1;
-const int l_out_e_r_min = 6;
+const int l_out_e_r_min = 4;
 const int l_out_e_r_max = 7;
 
 ////////////////////////////////
@@ -117,18 +120,20 @@ const int r_out_b_r_max = 7;
 const int r_in_e_c_min = 6;
 const int r_in_e_c_max = 7;
 const int r_in_e_r_min = 0;
-const int r_in_e_r_max = 1;
+const int r_in_e_r_max = 3;
 
 // Right Outer Edge Case
 const int r_out_e_c_min = 6;
 const int r_out_e_c_max = 7;
-const int r_out_e_r_min = 6;
+const int r_out_e_r_min = 4;
 const int r_out_e_r_max = 7;
 
 ////////////////////////////////
 
 void setup()
 {
+  for(int i=0; i<8; i++){ cell_acc[i] = 0; }
+
   Serial.begin(921600);
 
   pinMode(LED_PIN, OUTPUT);
@@ -246,82 +251,11 @@ void countCells()
       cell_r = R_INB;
     } else if (col >= r_out_b_c_min && col <= r_out_b_c_max && row >= r_out_b_r_min && row <= r_out_b_r_max){
       cell_r = R_OUTB;
-    } else if (col >= r_in_e_c_min && col <= r_in_e_c_max && row >= r_in_e_r_min && row <= r_in_e_r_max){
+    } else if (col >= 6 && col <= 7 && row >= 0 && row <= 1){//(col >= r_in_e_c_min && col <= r_in_e_c_max && row >= r_in_e_r_min && row <= r_in_e_r_max){
       cell_r = R_INS;
     } else if (col >= r_out_e_c_min && col <= r_out_e_c_max && row >= r_out_e_r_min && row <= r_out_e_r_max){
       cell_r = R_OUTS;
     }
-
-    /*
-    // Determine Left 8x8 Cell Type w/o middle
-    if(col >= 0 && col <= 1 && row >= 0 && row <= 2) {
-      cell_l = L_INS;
-    } else if (col >= 0 && col <= 1 && row >= 5 && row <= 7){
-      cell_l = L_OUTS;
-    } else if (col >= 2 && col <= 7 && row >= 0 && row <= 2){
-      cell_l = L_INB;
-    } else if (col >= 2 && col <= 7 && row >= 5 && row <= 7){
-      cell_l = L_OUTB;
-    }
-    
-    // Determine Right 8x8 Cell  w/o middle
-    if(col >= 0 && col <= 5 && row >= 0 && row <= 2) {
-      cell_r = R_INB;
-    } else if (col >= 0 && col <= 5 && row >= 5 && row <= 7){
-      cell_r = R_OUTB;
-    } else if (col >= 5 && col <= 7 && row >= 0 && row <= 2){
-      cell_r = R_INS;
-    } else if (col >= 5 && col <= 7 && row >= 5 && row <= 7){
-      cell_r = R_OUTS;
-    }*/
-
-    /*
-    // Determine Left 8x8 Cell Type
-    if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
-      cell_l = L_INS;
-    } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
-      cell_l = L_OUTS;
-    } else if (col >= 2 && col <= 7 && row >= 0 && row <= 3){
-      cell_l = L_INB;
-    } else if (col >= 2 && col <= 7 && row >= 3 && row <= 7){
-      cell_l = L_OUTB;
-    }
-    
-    // Determine Right 8x8 Cell Type
-    if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
-      cell_r = R_INB;
-    } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
-      cell_r = R_OUTB;
-    } else if (col >= 5 && col <= 7 && row >= 0 && row <= 3){
-      cell_r = R_INS;
-    } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
-      cell_r = R_OUTS;
-    }
-    */
-
-    /*
-    // Determine Left 4x4 Cell Type
-    if(col >= 0 && col <= 1 && row >= 0 && row <= 3) {
-      cell_l = L_INS;
-    } else if (col >= 0 && col <= 1 && row >= 3 && row <= 7){
-      cell_l = L_OUTS;
-    } else if (col >= 2 && col <= 7 && row >= 0 && row <= 3){
-      cell_l = L_INB;
-    } else if (col >= 2 && col <= 7 && row >= 3 && row <= 7){
-      cell_l = L_OUTB;
-    }
-    
-    // Determine Right 4x4 Cell Type
-    if(col >= 0 && col <= 5 && row >= 0 && row <= 3) {
-      cell_r = R_INB;
-    } else if (col >= 0 && col <= 5 && row >= 3 && row <= 7){
-      cell_r = R_OUTB;
-    } else if (col >= 5 && col <= 7 && row >= 0 && row <= 3){
-      cell_r = R_INS;
-    } else if (col >= 5 && col <= 7 && row >= 3 && row <= 7){
-      cell_r = R_OUTS;
-    }*/
-  
 
     // Update respective counts
     if(meetsThresh(i, datal)) cell_counts[cell_l] += 1;
@@ -336,23 +270,27 @@ void countCells()
     }
   }
 
+  //cell_active[R_INS] = false;
+
   // Boolean update
   LOUTS= cell_active[L_OUTS];
   LINS = cell_active[L_INS];
   ROUTS= cell_active[R_OUTS];
   RINS = cell_active[R_INS];
-  LOUT = cell_active[L_OUTB] || cell_active[L_OUTS];
-  LIN  = cell_active[L_INB]  || cell_active[L_INS];
-  ROUT = cell_active[R_OUTB] || cell_active[R_OUTS];
-  RIN  = cell_active[R_INB]  || cell_active[R_INS];
+  LOUT = cell_active[L_OUTB];// || cell_active[L_OUTS];
+  LIN  = cell_active[L_INB];//  || cell_active[L_INS];
+  ROUT = cell_active[R_OUTB];// || cell_active[R_OUTS];
+  RIN  = cell_active[R_INB];//  || cell_active[R_INS];
   OUT  = LOUT || ROUT;
   IN   = LIN  || RIN;
 
-  if(ptr) {
-  Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
-  Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\r", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
-  ptr = false;
-  }
+
+
+  // if(ptr) {
+  // Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
+  // Serial.printf("Outer: %-4d %-4d %-4d %-4d\n\r", cell_active[L_OUTS], cell_active[L_OUTB], cell_active[R_OUTB], cell_active[R_OUTS]);
+  // ptr = false;
+  // }
 }
 
 inline bool isTimeout(){
@@ -384,16 +322,16 @@ bool delayedMeasure() {
   countCells();
   unsigned long mes_start = millis();
 
-  _LOUT=LOUT;
-  _LIN=LIN;
-  _ROUT=ROUT;
-  _RIN=RIN;
-  _LINS=LINS;
+  _LOUT =LOUT;
+  _LIN  =LIN;
+  _ROUT =ROUT;
+  _RIN  =RIN;
+  _LINS =LINS;
   _LOUTS=LOUTS;
-  _RINS=RINS;
+  _RINS =RINS;
   _ROUTS=ROUTS;
-  _OUT=OUT;
-  _IN=IN;
+  _OUT  =OUT;
+  _IN   =IN;
 
   while(!metTimeThresh(mes_start, measure_thresh));
 
@@ -425,8 +363,44 @@ void loop()
   /*****************************|
           TOF Measurement
   |*****************************/
-  delayedMeasure();
-  
+  //delayedMeasure();
+  for(int i=0; i<8; i++){ cell_acc[i] = 0; }
+  for(int i=0; i<repoll; i++){
+    pollBothSensors();
+    countCells();
+
+    cell_acc[L_OUTB] |= LOUT ? 1 : 0;
+    cell_acc[L_OUTS] |= LOUTS ? 1 : 0;
+    cell_acc[L_INB]  |= LIN ? 1 : 0;
+    cell_acc[L_INS]  |= LINS ? 1 : 0;
+    cell_acc[R_OUTB] |= ROUT ? 1 : 0;
+    cell_acc[R_OUTS] |= ROUTS ? 1 : 0;
+    cell_acc[R_INB]  |= RIN ? 1 : 0;
+    cell_acc[R_INS]  |= RINS ? 1 : 0;
+
+    delay(measure_thresh);
+  }
+
+  LOUT  = cell_acc[L_OUTB] ? true : false;
+  LIN   = cell_acc[L_INB] ? true : false;
+  ROUT  = cell_acc[R_OUTB] ? true : false;
+  RIN   = cell_acc[R_INB] ? true : false;
+
+  LOUTS = cell_acc[L_OUTS] ? true : false;
+  ROUTS = cell_acc[R_OUTS] ? true : false;
+  LINS  = cell_acc[L_INS] ? true : false;
+  RINS  = cell_acc[R_INS] ? true : false;
+
+  OUT   = LOUT || ROUT;
+  IN    = LIN  || RIN;
+
+  bool same_in, same_out = false;
+  same_in = LINS && RINS;
+  same_out = LOUTS && ROUTS;
+
+  Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, same_in);
+  Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, same_out);
+
   switch(state){
     /*****************************|
           Default IDLE state
@@ -503,7 +477,7 @@ void loop()
 
   if(dbl){
     digitalWrite(LED_PIN, 1);
-    delay(100);
+    delay(1000);
     digitalWrite(LED_PIN, 0);
   }
   Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\r", counter, state, dbl, dblp);
