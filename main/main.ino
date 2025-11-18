@@ -15,7 +15,7 @@
 #define ranging_freq 15       // Ranging freq
 #define LED_PIN 2
 #define repoll_attempts 3     // How many time it tries to re-poll data
-#define repoll 5
+#define repoll 3
 
 // Debugging
 #define I2C_DEBUG false
@@ -24,11 +24,11 @@
       Physical Parameter
 |*****************************/
 unsigned long state_start           = 0;      // ms
-const unsigned long TIMEOUT         = 500;    // ms
-const unsigned long clear_thresh    = 250;    // ms
-const unsigned long measure_thresh  = 15;    // ms (20ms is promising)
+const unsigned long TIMEOUT         = 750;    // ms
+const unsigned long clear_thresh    = 200;    // ms
+const unsigned long measure_thresh  = 20;    // ms (20ms is promising)
 #define dist_threshold 900                    // mm 
-#define active_threshold 5                    // How many zones required to trigger a detection
+#define active_threshold 6                    // How many zones required to trigger a detection
 #define sbs_active_threshold 4                // Side-By-Side zone threshold
 
 bool ptr = true;
@@ -94,12 +94,12 @@ const int l_out_b_r_max = 7;
 const int l_in_e_c_min = 0;
 const int l_in_e_c_max = 1;
 const int l_in_e_r_min = 0;
-const int l_in_e_r_max = 3;
+const int l_in_e_r_max = 1;
 
 // Left Outer Edge Case
 const int l_out_e_c_min = 0;
 const int l_out_e_c_max = 1;
-const int l_out_e_r_min = 4;
+const int l_out_e_r_min = 6;
 const int l_out_e_r_max = 7;
 
 ////////////////////////////////
@@ -120,12 +120,12 @@ const int r_out_b_r_max = 7;
 const int r_in_e_c_min = 6;
 const int r_in_e_c_max = 7;
 const int r_in_e_r_min = 0;
-const int r_in_e_r_max = 3;
+const int r_in_e_r_max = 1; 
 
 // Right Outer Edge Case
 const int r_out_e_c_min = 6;
 const int r_out_e_c_max = 7;
-const int r_out_e_r_min = 4;
+const int r_out_e_r_min = 6;
 const int r_out_e_r_max = 7;
 
 ////////////////////////////////
@@ -251,7 +251,7 @@ void countCells()
       cell_r = R_INB;
     } else if (col >= r_out_b_c_min && col <= r_out_b_c_max && row >= r_out_b_r_min && row <= r_out_b_r_max){
       cell_r = R_OUTB;
-    } else if (col >= 6 && col <= 7 && row >= 0 && row <= 1){//(col >= r_in_e_c_min && col <= r_in_e_c_max && row >= r_in_e_r_min && row <= r_in_e_r_max){
+    } else if (col >= r_in_e_c_min && col <= r_in_e_c_max && row >= r_in_e_r_min && row <= r_in_e_r_max){
       cell_r = R_INS;
     } else if (col >= r_out_e_c_min && col <= r_out_e_c_max && row >= r_out_e_r_min && row <= r_out_e_r_max){
       cell_r = R_OUTS;
@@ -283,8 +283,6 @@ void countCells()
   RIN  = cell_active[R_INB];//  || cell_active[R_INS];
   OUT  = LOUT || ROUT;
   IN   = LIN  || RIN;
-
-
 
   // if(ptr) {
   // Serial.printf("Inner: %-4d %-4d %-4d %-4d\n\r", cell_active[L_INS], cell_active[L_INB], cell_active[R_INB], cell_active[R_INS]);
@@ -369,27 +367,27 @@ void loop()
     pollBothSensors();
     countCells();
 
-    cell_acc[L_OUTB] |= LOUT ? 1 : 0;
+    cell_acc[L_OUTB] |= LOUT  ? 1 : 0;
     cell_acc[L_OUTS] |= LOUTS ? 1 : 0;
-    cell_acc[L_INB]  |= LIN ? 1 : 0;
-    cell_acc[L_INS]  |= LINS ? 1 : 0;
-    cell_acc[R_OUTB] |= ROUT ? 1 : 0;
+    cell_acc[L_INB]  |= LIN   ? 1 : 0;
+    cell_acc[L_INS]  |= LINS  ? 1 : 0;
+    cell_acc[R_OUTB] |= ROUT  ? 1 : 0;
     cell_acc[R_OUTS] |= ROUTS ? 1 : 0;
-    cell_acc[R_INB]  |= RIN ? 1 : 0;
-    cell_acc[R_INS]  |= RINS ? 1 : 0;
+    cell_acc[R_INB]  |= RIN   ? 1 : 0;
+    cell_acc[R_INS]  |= RINS  ? 1 : 0;
 
     delay(measure_thresh);
   }
 
-  LOUT  = cell_acc[L_OUTB] ? true : false;
-  LIN   = cell_acc[L_INB] ? true : false;
-  ROUT  = cell_acc[R_OUTB] ? true : false;
-  RIN   = cell_acc[R_INB] ? true : false;
+  LOUT  = cell_acc[L_OUTB]  ? true : false;
+  LIN   = cell_acc[L_INB]   ? true : false;
+  ROUT  = cell_acc[R_OUTB]  ? true : false;
+  RIN   = cell_acc[R_INB]   ? true : false;
 
-  LOUTS = cell_acc[L_OUTS] ? true : false;
-  ROUTS = cell_acc[R_OUTS] ? true : false;
-  LINS  = cell_acc[L_INS] ? true : false;
-  RINS  = cell_acc[R_INS] ? true : false;
+  LOUTS = cell_acc[L_OUTS]  ? true : false;
+  ROUTS = cell_acc[R_OUTS]  ? true : false;
+  LINS  = cell_acc[L_INS]   ? true : false;
+  RINS  = cell_acc[R_INS]   ? true : false;
 
   OUT   = LOUT || ROUT;
   IN    = LIN  || RIN;
@@ -408,10 +406,10 @@ void loop()
     case IDLE:
       
       if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
-      else if (IN && OUT){                  state = IDLE;}
-      else if (OUT){                        state = ENTER_P;}
-      else if (IN){                         state = EXIT_P;}
-      else {                                state = IDLE;}
+      else if (IN && OUT){                      state = IDLE;}
+      else if (OUT){                            state = ENTER_P;}
+      else if (IN){                             state = EXIT_P;}
+      else {                                    state = IDLE;}
 
       dblp = (LINS && RINS) || (LOUTS && ROUTS);
       state_start = millis();
