@@ -4,18 +4,19 @@
 #include <i2cdetect.h>
 
 // Hardware Defines & Globals
-#define tofl_rst 14           // Left TOF rst pin
-#define tofr_rst 13           // Right TOF rst pin
+const int  fbfm  = 1;
+#define tofl_rst 13           // Left TOF rst pin
+#define tofr_rst 14           // Right TOF rst pin
 #define tofl_addr 0x44        // Left TOF addr
 #define tofr_addr 0x46        // Right TOF addr
 #define tof_addr_default 0x29 // Default
 #define I2C_freq 400000       // I2C bus freq (1 MHz)
-#define image_resolution 64   // TOF image resolution
-#define image_width 8         // Row of TOF image resolution
+const int image_resolution = fbfm ? 16 : 64;   // TOF image resolution
+const int image_width = fbfm ? 4 : 8;         // Row of TOF image resolution
 #define ranging_freq 15       // Ranging freq
 #define LED_PIN 2
 #define repoll_attempts 3     // How many time it tries to re-poll data
-#define repoll 3
+#define repoll 1
 
 // Debugging
 #define I2C_DEBUG false
@@ -26,10 +27,11 @@
 unsigned long state_start           = 0;      // ms
 const unsigned long TIMEOUT         = 750;    // ms
 const unsigned long clear_thresh    = 200;    // ms
-const unsigned long measure_thresh  = 20;    // ms (20ms is promising)
+const unsigned long measure_thresh  = 15;    // ms (20ms is promising)
+unsigned long print_timer           = 0;
 #define dist_threshold 900                    // mm 
-#define active_threshold 6                    // How many zones required to trigger a detection
-#define sbs_active_threshold 4                // Side-By-Side zone threshold
+const int active_threshold = fbfm ? 2 : 4;                    // How many zones required to trigger a detection
+const int sbs_active_threshold = fbfm ? 2 : 4;                // Side-By-Side zone threshold
 
 bool ptr = true;
 
@@ -79,31 +81,32 @@ int counter = 0;  // Primary In/Out counter
 ////////////////////////////////
 
 // Left Inner Baseline
-const int l_in_b_c_min = 2;
-const int l_in_b_c_max = 7;
-const int l_in_b_r_min = 0;
-const int l_in_b_r_max = 1;
+const int l_in_b_c_min = fbfm ? 2 : 4;
+const int l_in_b_c_max = fbfm ? 3 : 7;
+const int l_in_b_r_min = fbfm ? 0 : 0;
+const int l_in_b_r_max = fbfm ? 1 : 0;
 
 // Left Outer Baseline
-const int l_out_b_c_min = 2;
-const int l_out_b_c_max = 7;
-const int l_out_b_r_min = 6;
-const int l_out_b_r_max = 7;
+const int l_out_b_c_min = fbfm ? 2 : 4;
+const int l_out_b_c_max = fbfm ? 3 : 7;
+const int l_out_b_r_min = fbfm ? 2 : 7;
+const int l_out_b_r_max = fbfm ? 3 : 7;
 
 // Left Inner Edge Case
-const int l_in_e_c_min = 0;
-const int l_in_e_c_max = 1;
-const int l_in_e_r_min = 0;
-const int l_in_e_r_max = 1;
+const int l_in_e_c_min = fbfm ? 0 : 0;
+const int l_in_e_c_max = fbfm ? 1 : 1;
+const int l_in_e_r_min = fbfm ? 0 : 0;
+const int l_in_e_r_max = fbfm ? 1 : 0;
 
 // Left Outer Edge Case
-const int l_out_e_c_min = 0;
-const int l_out_e_c_max = 1;
-const int l_out_e_r_min = 6;
-const int l_out_e_r_max = 7;
+const int l_out_e_c_min = fbfm ? 0 : 0;
+const int l_out_e_c_max = fbfm ? 1 : 1;
+const int l_out_e_r_min = fbfm ? 2 : 7;
+const int l_out_e_r_max = fbfm ? 3 : 7;
 
 ////////////////////////////////
 
+/*
 // Right Inner Baseline
 const int r_in_b_c_min = 0;
 const int r_in_b_c_max = 5;
@@ -127,7 +130,30 @@ const int r_out_e_c_min = 6;
 const int r_out_e_c_max = 7;
 const int r_out_e_r_min = 6;
 const int r_out_e_r_max = 7;
+*/
+// Right Inner Baseline
+const int r_in_b_c_min = fbfm ? 0 : 4;
+const int r_in_b_c_max = fbfm ? 1 : 7;
+const int r_in_b_r_min = fbfm ? 0 : 7;
+const int r_in_b_r_max = fbfm ? 1 : 7;
 
+// Right Outer Baseline
+const int r_out_b_c_min = fbfm ? 0 : 4;
+const int r_out_b_c_max = fbfm ? 1 : 7;
+const int r_out_b_r_min = fbfm ? 2 : 0;
+const int r_out_b_r_max = fbfm ? 3 : 0;
+
+// Right Inner Edge Case
+const int r_in_e_c_min = fbfm ? 2 : 0;
+const int r_in_e_c_max = fbfm ? 3 : 1;
+const int r_in_e_r_min = fbfm ? 0 : 7;
+const int r_in_e_r_max = fbfm ? 1 : 7;
+
+// Right Outer Edge Case
+const int r_out_e_c_min = fbfm ? 2 : 0;
+const int r_out_e_c_max = fbfm ? 3 : 1;
+const int r_out_e_r_min = fbfm ? 2 : 0;
+const int r_out_e_r_max = fbfm ? 3 : 0;
 ////////////////////////////////
 
 void setup()
@@ -231,7 +257,7 @@ void countCells()
   
   for(int i=0; i < image_resolution; i++){  // Loop all 64 cells
     int col = i % image_width;              // Calculates current column
-    int row = i / 8;                        // Calculates curren row
+    int row = i / image_width;                        // Calculates curren row
     
     CellType cell_l;
     CellType cell_r;
@@ -260,7 +286,54 @@ void countCells()
     // Update respective counts
     if(meetsThresh(i, datal)) cell_counts[cell_l] += 1;
     if(meetsThresh(i, datar)) cell_counts[cell_r] += 1;
+
   }
+
+  /*
+  if(millis() - print_timer > 500) {
+  for (int i=0; i < image_width; ++i){
+    
+    printf("%-5d %-5d %-5d %-5d \t|\t  %-5d %-5d %-5d %-5d\n\r", 
+      (int)(datal.distance_mm[(i*image_width)+0]/10),
+      (int)(datal.distance_mm[(i*image_width)+1]/10),
+      (int)(datal.distance_mm[(i*image_width)+2]/10),
+      (int)(datal.distance_mm[(i*image_width)+3]/10),
+
+      (int)(datar.distance_mm[(12-(i*image_width))+3]/10),
+      (int)(datar.distance_mm[(12-(i*image_width))+2]/10),
+      (int)(datar.distance_mm[(12-(i*image_width))+1]/10),
+      (int)(datar.distance_mm[(12-(i*image_width))+0]/10));
+  }
+    printf("\n\n");
+    print_timer = millis();
+  }*/
+
+  /*
+  if(millis() - print_timer > 500) {
+  for (int i=0; i < 8; ++i){
+    
+    printf("%-5d %-5d %-5d %-5d %-5d %-5d %-5d %-5d \t|\t %-5d %-5d %-5d %-5d %-5d %-5d %-5d %-5d\n\r", 
+      (int)(datal.distance_mm[(i*8)+0]/10),
+      (int)(datal.distance_mm[(i*8)+1]/10),
+      (int)(datal.distance_mm[(i*8)+2]/10),
+      (int)(datal.distance_mm[(i*8)+3]/10),
+      (int)(datal.distance_mm[(i*8)+4]/10),
+      (int)(datal.distance_mm[(i*8)+5]/10),
+      (int)(datal.distance_mm[(i*8)+6]/10),
+      (int)(datal.distance_mm[(i*8)+7]/10),
+      
+      (int)(datar.distance_mm[(56-(i*8))+7]/10),
+      (int)(datar.distance_mm[(56-(i*8))+6]/10),
+      (int)(datar.distance_mm[(56-(i*8))+5]/10),
+      (int)(datar.distance_mm[(56-(i*8))+4]/10),
+      (int)(datar.distance_mm[(56-(i*8))+3]/10),
+      (int)(datar.distance_mm[(56-(i*8))+2]/10),
+      (int)(datar.distance_mm[(56-(i*8))+1]/10),
+      (int)(datar.distance_mm[(56-(i*8))+0]/10));
+  }
+    printf("\n\n");
+    print_timer = millis();
+  }*/
 
   // Update active cells
   for(int i=0; i<8; i++){
@@ -358,6 +431,14 @@ inline bool metTimeThresh(unsigned long ref, unsigned long thresh) {return milli
 
 void loop()
 { 
+  /*delay(50);
+  int tla = tofl.getAddress();
+  delay(50);
+  int tra = tofr.getAddress();
+  printf("Lost TOF Connection Left: %02X \t Right: %02X\n\r", tla, tra);
+  if(tla != 0x44 || tra != 0x29){
+    printf("Lost TOF Connection Left: %02X \t Right: %02X\n\r", tla, tra);
+  }*/
   /*****************************|
           TOF Measurement
   |*****************************/
@@ -396,9 +477,10 @@ void loop()
   same_in = LINS && RINS;
   same_out = LOUTS && ROUTS;
 
+  if(millis() - print_timer > 500){
   Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, same_in);
   Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, same_out);
-
+  }
   switch(state){
     /*****************************|
           Default IDLE state
@@ -478,5 +560,7 @@ void loop()
     delay(1000);
     digitalWrite(LED_PIN, 0);
   }
+  if(millis() - print_timer > 500){
   Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\r", counter, state, dbl, dblp);
+  }
 }
