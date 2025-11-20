@@ -5,8 +5,8 @@
 
 // Hardware Defines & Globals
 const int  fbfm  = 1;
-#define tofl_rst 13           // Left TOF rst pin
-#define tofr_rst 14           // Right TOF rst pin
+#define tofl_rst 14           // Left TOF rst pin
+#define tofr_rst 13           // Right TOF rst pin
 #define tofl_addr 0x44        // Left TOF addr
 #define tofr_addr 0x46        // Right TOF addr
 #define tof_addr_default 0x29 // Default
@@ -17,6 +17,7 @@ const int image_width = fbfm ? 4 : 8;         // Row of TOF image resolution
 #define LED_PIN 2
 #define repoll_attempts 3     // How many time it tries to re-poll data
 #define repoll 1
+#define dbg_distance 1
 
 // Debugging
 #define I2C_DEBUG false
@@ -29,7 +30,7 @@ const unsigned long TIMEOUT         = 750;    // ms
 const unsigned long clear_thresh    = 200;    // ms
 const unsigned long measure_thresh  = 15;    // ms (20ms is promising)
 unsigned long print_timer           = 0;
-#define dist_threshold 900                    // mm 
+#define dist_threshold 1500                    // mm 
 const int active_threshold = fbfm ? 2 : 4;                    // How many zones required to trigger a detection
 const int sbs_active_threshold = fbfm ? 2 : 4;                // Side-By-Side zone threshold
 
@@ -106,31 +107,6 @@ const int l_out_e_r_max = fbfm ? 3 : 7;
 
 ////////////////////////////////
 
-/*
-// Right Inner Baseline
-const int r_in_b_c_min = 0;
-const int r_in_b_c_max = 5;
-const int r_in_b_r_min = 0;
-const int r_in_b_r_max = 1;
-
-// Right Outer Baseline
-const int r_out_b_c_min = 0;
-const int r_out_b_c_max = 5;
-const int r_out_b_r_min = 6;
-const int r_out_b_r_max = 7;
-
-// Right Inner Edge Case
-const int r_in_e_c_min = 6;
-const int r_in_e_c_max = 7;
-const int r_in_e_r_min = 0;
-const int r_in_e_r_max = 1; 
-
-// Right Outer Edge Case
-const int r_out_e_c_min = 6;
-const int r_out_e_c_max = 7;
-const int r_out_e_r_min = 6;
-const int r_out_e_r_max = 7;
-*/
 // Right Inner Baseline
 const int r_in_b_c_min = fbfm ? 0 : 4;
 const int r_in_b_c_max = fbfm ? 1 : 7;
@@ -289,24 +265,26 @@ void countCells()
 
   }
 
-  /*
-  if(millis() - print_timer > 500) {
-  for (int i=0; i < image_width; ++i){
-    
-    printf("%-5d %-5d %-5d %-5d \t|\t  %-5d %-5d %-5d %-5d\n\r", 
-      (int)(datal.distance_mm[(i*image_width)+0]/10),
-      (int)(datal.distance_mm[(i*image_width)+1]/10),
-      (int)(datal.distance_mm[(i*image_width)+2]/10),
-      (int)(datal.distance_mm[(i*image_width)+3]/10),
+  
+  if(dbg_distance){
+    if(millis() - print_timer > 500) {
+    for (int i=0; i < image_width; ++i){
+      
+      printf("%-5d %-5d %-5d %-5d \t|\t  %-5d %-5d %-5d %-5d\n\r", 
+        (int)(datal.distance_mm[(i*image_width)+0]/10),
+        (int)(datal.distance_mm[(i*image_width)+1]/10),
+        (int)(datal.distance_mm[(i*image_width)+2]/10),
+        (int)(datal.distance_mm[(i*image_width)+3]/10),
 
-      (int)(datar.distance_mm[(12-(i*image_width))+3]/10),
-      (int)(datar.distance_mm[(12-(i*image_width))+2]/10),
-      (int)(datar.distance_mm[(12-(i*image_width))+1]/10),
-      (int)(datar.distance_mm[(12-(i*image_width))+0]/10));
+        (int)(datar.distance_mm[(12-(i*image_width))+3]/10),
+        (int)(datar.distance_mm[(12-(i*image_width))+2]/10),
+        (int)(datar.distance_mm[(12-(i*image_width))+1]/10),
+        (int)(datar.distance_mm[(12-(i*image_width))+0]/10));
+    }
+      printf("\n\n");
+      print_timer = millis();
+    }
   }
-    printf("\n\n");
-    print_timer = millis();
-  }*/
 
   /*
   if(millis() - print_timer > 500) {
@@ -431,20 +409,31 @@ inline bool metTimeThresh(unsigned long ref, unsigned long thresh) {return milli
 
 void loop()
 { 
-  /*delay(50);
-  int tla = tofl.getAddress();
-  delay(50);
-  int tra = tofr.getAddress();
-  printf("Lost TOF Connection Left: %02X \t Right: %02X\n\r", tla, tra);
-  if(tla != 0x44 || tra != 0x29){
-    printf("Lost TOF Connection Left: %02X \t Right: %02X\n\r", tla, tra);
-  }*/
+  // Is Alive Debugging Check
+  if(!tofl.isConnected()) {
+    printf("Left TOF Disconnected\n\r");
+  }
+  if(!tofr.isConnected()) {
+    printf("Right TOF Disconnected\n\r");
+  }
+  if(!tofl.isConnected() || !tofr.isConnected()) {
+    return;
+  }
+  
   /*****************************|
           TOF Measurement
   |*****************************/
   //delayedMeasure();
   for(int i=0; i<8; i++){ cell_acc[i] = 0; }
   for(int i=0; i<repoll; i++){
+    /*
+    unsigned long mes_timeout = millis();
+    while(!tofl.isDataReady() && !tofr.isDataReady()){
+      //printf(","); 
+    } // Busy Wait
+    printf("Time waited [ms] = %-6d\n\r", millis()-mes_timeout);
+    */
+    //printf("LTOF Ready = %-1d \t|\t RTOF Ready = %-1d\n\r", tofl.isDataReady(), tofr.isDataReady());
     pollBothSensors();
     countCells();
 
