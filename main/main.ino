@@ -3,6 +3,11 @@
 #include <SparkFun_VL53L5CX_Library.h>  // TOF lib
 #include <i2cdetect.h>
 
+#define BIDIR_LED 19
+#define CTR_INC 18
+#define CTR_DEC 5
+#define IDLE_LED 17
+
 // Hardware Defines & Globals
 const int  fbfm  = 1;
 #define tofl_rst 14           // Left TOF rst pin
@@ -85,24 +90,24 @@ int counter = 0;  // Primary In/Out counter
 const int l_in_b_c_min = fbfm ? 2 : 4;
 const int l_in_b_c_max = fbfm ? 3 : 7;
 const int l_in_b_r_min = fbfm ? 0 : 0;
-const int l_in_b_r_max = fbfm ? 1 : 0;
+const int l_in_b_r_max = fbfm ? 0 : 0;
 
 // Left Outer Baseline
 const int l_out_b_c_min = fbfm ? 2 : 4;
 const int l_out_b_c_max = fbfm ? 3 : 7;
-const int l_out_b_r_min = fbfm ? 2 : 7;
+const int l_out_b_r_min = fbfm ? 3 : 7;
 const int l_out_b_r_max = fbfm ? 3 : 7;
 
 // Left Inner Edge Case
 const int l_in_e_c_min = fbfm ? 0 : 0;
 const int l_in_e_c_max = fbfm ? 1 : 1;
 const int l_in_e_r_min = fbfm ? 0 : 0;
-const int l_in_e_r_max = fbfm ? 1 : 0;
+const int l_in_e_r_max = fbfm ? 0 : 0;
 
 // Left Outer Edge Case
 const int l_out_e_c_min = fbfm ? 0 : 0;
 const int l_out_e_c_max = fbfm ? 1 : 1;
-const int l_out_e_r_min = fbfm ? 2 : 7;
+const int l_out_e_r_min = fbfm ? 3 : 7;
 const int l_out_e_r_max = fbfm ? 3 : 7;
 
 ////////////////////////////////
@@ -111,24 +116,24 @@ const int l_out_e_r_max = fbfm ? 3 : 7;
 const int r_in_b_c_min = fbfm ? 0 : 4;
 const int r_in_b_c_max = fbfm ? 1 : 7;
 const int r_in_b_r_min = fbfm ? 0 : 7;
-const int r_in_b_r_max = fbfm ? 1 : 7;
+const int r_in_b_r_max = fbfm ? 0 : 7;
 
 // Right Outer Baseline
 const int r_out_b_c_min = fbfm ? 0 : 4;
 const int r_out_b_c_max = fbfm ? 1 : 7;
-const int r_out_b_r_min = fbfm ? 2 : 0;
+const int r_out_b_r_min = fbfm ? 3 : 0;
 const int r_out_b_r_max = fbfm ? 3 : 0;
 
 // Right Inner Edge Case
 const int r_in_e_c_min = fbfm ? 2 : 0;
 const int r_in_e_c_max = fbfm ? 3 : 1;
 const int r_in_e_r_min = fbfm ? 0 : 7;
-const int r_in_e_r_max = fbfm ? 1 : 7;
+const int r_in_e_r_max = fbfm ? 0 : 7;
 
 // Right Outer Edge Case
 const int r_out_e_c_min = fbfm ? 2 : 0;
 const int r_out_e_c_max = fbfm ? 3 : 1;
-const int r_out_e_r_min = fbfm ? 2 : 0;
+const int r_out_e_r_min = fbfm ? 3 : 0;
 const int r_out_e_r_max = fbfm ? 3 : 0;
 ////////////////////////////////
 
@@ -139,6 +144,10 @@ void setup()
   Serial.begin(921600);
 
   pinMode(LED_PIN, OUTPUT);
+  pinMode(BIDIR_LED, OUTPUT);
+  pinMode(CTR_INC, OUTPUT);
+  pinMode(CTR_DEC, OUTPUT);
+  pinMode(IDLE_LED, OUTPUT);
 
   delay(1000);
   Serial.println("- - - - - - - - - - Initializing - - - - - - - - - -");
@@ -459,25 +468,26 @@ void loop()
   LINS  = cell_acc[L_INS]   ? true : false;
   RINS  = cell_acc[R_INS]   ? true : false;
 
-  OUT   = LOUT || ROUT;
-  IN    = LIN  || RIN;
+  OUT   = LOUT || ROUT || LOUTS || ROUTS;
+  IN    = LIN  || RIN  || LINS  || RINS;
 
   bool same_in, same_out = false;
   same_in = LINS && RINS;
   same_out = LOUTS && ROUTS;
 
-  if(millis() - print_timer > 500){
+  //if(millis() - print_timer > 500){
   Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, same_in);
   Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, same_out);
-  }
+  //}
+  //digitalWrite(IDLE_LED, HIGH);return;
   switch(state){
     /*****************************|
           Default IDLE state
     |*****************************/
     case IDLE:
-      
-      if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
-      else if (IN && OUT){                      state = IDLE;}
+      digitalWrite(IDLE_LED, HIGH);
+      //if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
+      if (IN && OUT){                      state = IDLE;}
       else if (OUT){                            state = ENTER_P;}
       else if (IN){                             state = EXIT_P;}
       else {                                    state = IDLE;}
@@ -490,6 +500,7 @@ void loop()
          Bi-Directional Movement
     |*****************************/
     case BIDIR_P:
+      digitalWrite(BIDIR_LED, HIGH);
       if((LIN && ROUT) || (LOUT && RIN)){
         state = CLEAR;
         state_start = millis();
@@ -501,10 +512,10 @@ void loop()
             Enter Pending
     |*****************************/
     case ENTER_P:
-      if(IN){
+      if(IN ){//&& millis()-state_start>500){
         ++counter;
         state = CLEAR;
-        
+        digitalWrite(CTR_INC, HIGH);
         if(dblp && (LINS || RINS)){
           ++counter;
           dbl = 1;
@@ -518,10 +529,10 @@ void loop()
             Exit Pending
     |*****************************/
     case EXIT_P:
-      if(OUT){
+      if(OUT){//&& millis()-state_start>500){
         --counter;
         state = CLEAR;
-        
+        digitalWrite(CTR_DEC, HIGH);
         if(dblp && (LOUTS || ROUTS)){
           --counter;
           dbl = 1;
@@ -540,6 +551,10 @@ void loop()
         state = IDLE;
         dbl = 0;
         dblp = 0;
+        digitalWrite(CTR_INC, LOW);
+        digitalWrite(CTR_DEC, LOW);
+        digitalWrite(IDLE_LED, LOW);
+        digitalWrite(BIDIR_LED, LOW);
       }
       break;
   }
