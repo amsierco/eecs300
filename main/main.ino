@@ -1,7 +1,10 @@
 #include <Wire.h>                       // I2C
 #include <esp_task_wdt.h>               // Watch Dog Timer
 #include <SparkFun_VL53L5CX_Library.h>  // TOF lib
-#include <i2cdetect.h>
+#include <i2cdetect.h>                  // I2C Debug
+#include <WiFi.h>                       // WIFI
+#include <WiFiClient.h>                 // WIFI
+#include <WiFiAP.h>                     // WIFI
 
 #define BIDIR_LED 19
 #define CTR_INC 18
@@ -137,11 +140,30 @@ const int r_out_e_r_min = fbfm ? 3 : 0;
 const int r_out_e_r_max = fbfm ? 3 : 0;
 ////////////////////////////////
 
+// WIFI
+const char *ssid = "ESP32_GROUP2";
+WiFiServer tcpServer(1234);
+
+void wifi_config(){
+  if (!WiFi.softAP(ssid)) {
+    Serial.println("Failed to create wifi AP");
+    while(1);
+  }
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
+  tcpServer.begin();
+
+  Serial.println("Server started");
+}
+
 void setup()
 {
   for(int i=0; i<8; i++){ cell_acc[i] = 0; }
 
   Serial.begin(921600);
+
+  wifi_config();
 
   pinMode(LED_PIN, OUTPUT);
   pinMode(BIDIR_LED, OUTPUT);
@@ -372,53 +394,10 @@ inline bool pollBothSensors() {
   return false;
 }
 
-bool delayedMeasure() {
-  /*****************************|
-            First Poll
+bool pollSensors( WiFiClient client) {
+/*****************************|
+        TOF Connection Check
   |*****************************/
-  pollBothSensors();
-  countCells();
-  unsigned long mes_start = millis();
-
-  _LOUT =LOUT;
-  _LIN  =LIN;
-  _ROUT =ROUT;
-  _RIN  =RIN;
-  _LINS =LINS;
-  _LOUTS=LOUTS;
-  _RINS =RINS;
-  _ROUTS=ROUTS;
-  _OUT  =OUT;
-  _IN   =IN;
-
-  while(!metTimeThresh(mes_start, measure_thresh));
-
-  /*****************************|
-        Second Poll
-  |*****************************/
-  pollBothSensors();
-  countCells();
-
-  LOUT  |= _LOUT;
-  LIN   |= _LIN;
-  ROUT  |= _ROUT;
-  RIN   |= _RIN;
-  OUT   |= _OUT;
-  IN    |= _IN;
-  LOUTS |= _LOUTS;
-  ROUTS |= _ROUTS;
-  LINS  |= _LINS;
-  RINS  |= _RINS;
-
-  ptr = true;
-  return true;
-}
-
-inline bool metTimeThresh(unsigned long ref, unsigned long thresh) {return millis() - ref > thresh;}
-
-void loop()
-{ 
-  // Is Alive Debugging Check
   if(!tofl.isConnected()) {
     printf("Left TOF Disconnected\n\r");
   }
@@ -426,23 +405,14 @@ void loop()
     printf("Right TOF Disconnected\n\r");
   }
   if(!tofl.isConnected() || !tofr.isConnected()) {
-    return;
+    return false;
   }
   
   /*****************************|
           TOF Measurement
   |*****************************/
-  //delayedMeasure();
   for(int i=0; i<8; i++){ cell_acc[i] = 0; }
   for(int i=0; i<repoll; i++){
-    /*
-    unsigned long mes_timeout = millis();
-    while(!tofl.isDataReady() && !tofr.isDataReady()){
-      //printf(","); 
-    } // Busy Wait
-    printf("Time waited [ms] = %-6d\n\r", millis()-mes_timeout);
-    */
-    //printf("LTOF Ready = %-1d \t|\t RTOF Ready = %-1d\n\r", tofl.isDataReady(), tofr.isDataReady());
     pollBothSensors();
     countCells();
 
@@ -475,96 +445,204 @@ void loop()
   same_in = LINS && RINS;
   same_out = LOUTS && ROUTS;
 
-  //if(millis() - print_timer > 500){
   Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, same_in);
   Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, same_out);
-  //}
-  //digitalWrite(IDLE_LED, HIGH);return;
-  switch(state){
-    /*****************************|
-          Default IDLE state
-    |*****************************/
-    case IDLE:
-      digitalWrite(IDLE_LED, HIGH);
-      //if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
-      if (IN && OUT){                      state = IDLE;}
-      else if (OUT){                            state = ENTER_P;}
-      else if (IN){                             state = EXIT_P;}
-      else {                                    state = IDLE;}
+  //client.println();
+  
+  return true;
+}
 
-      dblp = (LINS && RINS) || (LOUTS && ROUTS);
-      state_start = millis();
-      break;
+void loop()
+{ 
+  WiFiClient client = tcpServer.available();
+  
+  if(client){
+    while(client.connected()){
+      // Read TOF Data
+      pollSensors(client);
+      // FSM 
+      switch(state){
+        /*****************************|
+              Default IDLE state
+        |*****************************/
+        case IDLE:
+          digitalWrite(IDLE_LED, HIGH);
+          //if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
+          if (IN && OUT){                      state = IDLE;}
+          else if (OUT){                            state = ENTER_P;}
+          else if (IN){                             state = EXIT_P;}
+          else {                                    state = IDLE;}
 
-    /*****************************|
-         Bi-Directional Movement
-    |*****************************/
-    case BIDIR_P:
-      digitalWrite(BIDIR_LED, HIGH);
-      if((LIN && ROUT) || (LOUT && RIN)){
-        state = CLEAR;
-        state_start = millis();
+          dblp = (LINS && RINS) || (LOUTS && ROUTS);
+          state_start = millis();
+          break;
+
+        /*****************************|
+            Bi-Directional Movement
+        |*****************************/
+        case BIDIR_P:
+          digitalWrite(BIDIR_LED, HIGH);
+          if((LIN && ROUT) || (LOUT && RIN)){
+            state = CLEAR;
+            state_start = millis();
+          }
+          if(isTimeout()) state = IDLE;
+          break;
+
+        /*****************************|
+                Enter Pending
+        |*****************************/
+        case ENTER_P:
+          if(IN ){//&& millis()-state_start>500){
+            ++counter;
+            state = CLEAR;
+            digitalWrite(CTR_INC, HIGH);
+            if(dblp && (LINS || RINS)){
+              ++counter;
+              dbl = 1;
+            }
+            state_start = millis();
+          }
+          if(isTimeout()) state = IDLE;
+          break;
+
+        /*****************************|
+                Exit Pending
+        |*****************************/
+        case EXIT_P:
+          if(OUT){//&& millis()-state_start>500){
+            --counter;
+            state = CLEAR;
+            digitalWrite(CTR_DEC, HIGH);
+            if(dblp && (LOUTS || ROUTS)){
+              --counter;
+              dbl = 1;
+            }
+            state_start = millis();
+          } 
+          
+          if(isTimeout()) state = IDLE;
+          break;
+
+        /*****************************|
+              Clear Waiting Area
+        |*****************************/
+        case CLEAR:
+          if(isClear()){
+            state = IDLE;
+            dbl = 0;
+            dblp = 0;
+            digitalWrite(CTR_INC, LOW);
+            digitalWrite(CTR_DEC, LOW);
+            digitalWrite(IDLE_LED, LOW);
+            digitalWrite(BIDIR_LED, LOW);
+          }
+          break;
       }
-      if(isTimeout()) state = IDLE;
-      break;
 
-    /*****************************|
-            Enter Pending
-    |*****************************/
-    case ENTER_P:
-      if(IN ){//&& millis()-state_start>500){
-        ++counter;
-        state = CLEAR;
-        digitalWrite(CTR_INC, HIGH);
-        if(dblp && (LINS || RINS)){
-          ++counter;
-          dbl = 1;
-        }
-        state_start = millis();
-      }
-      if(isTimeout()) state = IDLE;
-      break;
+      client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d<br>",
+                    counter, state, dbl, dblp);
+    }
+    
+    client.stop();
+    Serial.println("Client disconnected");
+  }
+  return; // Skip legacy serial logic
 
-    /*****************************|
-            Exit Pending
-    |*****************************/
-    case EXIT_P:
-      if(OUT){//&& millis()-state_start>500){
-        --counter;
-        state = CLEAR;
-        digitalWrite(CTR_DEC, HIGH);
-        if(dblp && (LOUTS || ROUTS)){
-          --counter;
-          dbl = 1;
-        }
-        state_start = millis();
-      } 
+  /*****************************|
+        Alt USB/Serial Logic
+  |*****************************/
+
+  // Read TOF Data
+  //if(!pollSensors(client)) return;
+  
+  // switch(state){
+  //   /*****************************|
+  //         Default IDLE state
+  //   |*****************************/
+  //   case IDLE:
+  //     digitalWrite(IDLE_LED, HIGH);
+  //     //if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
+  //     if (IN && OUT){                      state = IDLE;}
+  //     else if (OUT){                            state = ENTER_P;}
+  //     else if (IN){                             state = EXIT_P;}
+  //     else {                                    state = IDLE;}
+
+  //     dblp = (LINS && RINS) || (LOUTS && ROUTS);
+  //     state_start = millis();
+  //     break;
+
+  //   /*****************************|
+  //        Bi-Directional Movement
+  //   |*****************************/
+  //   case BIDIR_P:
+  //     digitalWrite(BIDIR_LED, HIGH);
+  //     if((LIN && ROUT) || (LOUT && RIN)){
+  //       state = CLEAR;
+  //       state_start = millis();
+  //     }
+  //     if(isTimeout()) state = IDLE;
+  //     break;
+
+  //   /*****************************|
+  //           Enter Pending
+  //   |*****************************/
+  //   case ENTER_P:
+  //     if(IN ){//&& millis()-state_start>500){
+  //       ++counter;
+  //       state = CLEAR;
+  //       digitalWrite(CTR_INC, HIGH);
+  //       if(dblp && (LINS || RINS)){
+  //         ++counter;
+  //         dbl = 1;
+  //       }
+  //       state_start = millis();
+  //     }
+  //     if(isTimeout()) state = IDLE;
+  //     break;
+
+  //   /*****************************|
+  //           Exit Pending
+  //   |*****************************/
+  //   case EXIT_P:
+  //     if(OUT){//&& millis()-state_start>500){
+  //       --counter;
+  //       state = CLEAR;
+  //       digitalWrite(CTR_DEC, HIGH);
+  //       if(dblp && (LOUTS || ROUTS)){
+  //         --counter;
+  //         dbl = 1;
+  //       }
+  //       state_start = millis();
+  //     } 
       
-      if(isTimeout()) state = IDLE;
-      break;
+  //     if(isTimeout()) state = IDLE;
+  //     break;
 
-    /*****************************|
-          Clear Waiting Area
-    |*****************************/
-    case CLEAR:
-      if(isClear()){
-        state = IDLE;
-        dbl = 0;
-        dblp = 0;
-        digitalWrite(CTR_INC, LOW);
-        digitalWrite(CTR_DEC, LOW);
-        digitalWrite(IDLE_LED, LOW);
-        digitalWrite(BIDIR_LED, LOW);
-      }
-      break;
-  }
+  //   /*****************************|
+  //         Clear Waiting Area
+  //   |*****************************/
+  //   case CLEAR:
+  //     if(isClear()){
+  //       state = IDLE;
+  //       dbl = 0;
+  //       dblp = 0;
+  //       digitalWrite(CTR_INC, LOW);
+  //       digitalWrite(CTR_DEC, LOW);
+  //       digitalWrite(IDLE_LED, LOW);
+  //       digitalWrite(BIDIR_LED, LOW);
+  //     }
+  //     break;
+  // }
 
-  if(dbl){
-    digitalWrite(LED_PIN, 1);
-    delay(1000);
-    digitalWrite(LED_PIN, 0);
-  }
-  if(millis() - print_timer > 500){
-  Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\r", counter, state, dbl, dblp);
-  }
+  /*****************************|
+             Debugging
+  |*****************************/
+  // if(dbl){
+  //   digitalWrite(LED_PIN, 1);
+  //   delay(1000);
+  //   digitalWrite(LED_PIN, 0);
+  // }
+  // Serial.printf("Count: %-4d \t|\t State: %4d \t|\t Double: %4d \t|\t Pending: %4d\n\r", counter, state, dbl, dblp); 
+
 }
