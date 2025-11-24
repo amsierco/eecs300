@@ -35,10 +35,11 @@ const int image_width = fbfm ? 4 : 8;         // Row of TOF image resolution
 |*****************************/
 unsigned long state_start           = 0;      // ms
 const unsigned long TIMEOUT         = 750;    // ms
+const unsigned long TIMEOUT_EXTRA   = 1000;   //ms
 const unsigned long clear_thresh    = 200;    // ms
-const unsigned long measure_thresh  = 15;    // ms (20ms is promising)
+const unsigned long measure_thresh  = 15;     // ms (20ms is promising)
 unsigned long print_timer           = 0;
-#define dist_threshold 1500                    // mm 
+#define dist_threshold 1500                   // mm 
 const int active_threshold = fbfm ? 2 : 4;                    // How many zones required to trigger a detection
 const int sbs_active_threshold = fbfm ? 2 : 4;                // Side-By-Side zone threshold
 
@@ -48,7 +49,7 @@ bool ptr = true;
 bool LOUT, LIN, ROUT, RIN, LOUTS, LINS, ROUTS, RINS, OUT, IN = false;
 bool _LOUT, _LIN, _ROUT, _RIN, _LOUTS, _LINS, _ROUTS, _RINS, _OUT, _IN = false;
 int cell_acc[8];
-
+bool edg_in, edg_out;
 
 // State Machine
 enum CrossState {
@@ -56,7 +57,9 @@ enum CrossState {
   ENTER_P,  // 1
   EXIT_P,   // 2
   CLEAR,    // 3
-  BIDIR_P   // 4
+  BIDIR_P,  // 4
+  DUALEN_P, // 5
+  DUALEX_P  // 6
 };
 CrossState state = IDLE;
 
@@ -377,6 +380,10 @@ inline bool isTimeout(){
   return millis() - state_start > TIMEOUT;
 }
 
+inline bool isTimeoutExtra(){
+  return millis() - state_start > TIMEOUT_EXTRA;
+}
+
 inline bool isClear(){
   return millis() - state_start > clear_thresh;
 }
@@ -412,6 +419,9 @@ bool pollSensors( WiFiClient client) {
           TOF Measurement
   |*****************************/
   for(int i=0; i<8; i++){ cell_acc[i] = 0; }
+  edg_in = false;
+  edg_out = false;
+
   for(int i=0; i<repoll; i++){
     pollBothSensors();
     countCells();
@@ -441,13 +451,11 @@ bool pollSensors( WiFiClient client) {
   OUT   = LOUT || ROUT || LOUTS || ROUTS;
   IN    = LIN  || RIN  || LINS  || RINS;
 
-  bool same_in, same_out = false;
-  same_in = LINS && RINS;
-  same_out = LOUTS && ROUTS;
+  edg_in = LINS && RINS;
+  edg_out = LOUTS && ROUTS;
 
-  Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, same_in);
-  Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, same_out);
-  //client.println();
+  client.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
+  client.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
   
   return true;
 }
@@ -468,19 +476,46 @@ void loop()
         case IDLE:
           digitalWrite(IDLE_LED, HIGH);
           //if ((LINS && ROUTS) || (LOUTS && RINS)){  state = BIDIR_P;}
-          if (IN && OUT){                      state = IDLE;}
-          else if (OUT){                            state = ENTER_P;}
-          else if (IN){                             state = EXIT_P;}
-          else {                                    state = IDLE;}
+          if (IN && OUT)    {                        state = IDLE;}
+          else if (edg_out) {                        state = DUALEN_P;}
+          else if (edg_in)  {                        state = DUALEX_P;}
+          else if (OUT)     {                        state = ENTER_P;}
+          else if (IN)      {                        state = EXIT_P;}
+          else              {                        state = IDLE;}
 
           dblp = (LINS && RINS) || (LOUTS && ROUTS);
           state_start = millis();
+          break;
+        /*****************************|
+              Dual Enter Pending
+        |*****************************/
+        case DUALEN_P:
+          if(edg_in){
+            ++counter;
+            ++counter;
+            state = CLEAR;
+            state_start = millis();
+          }
+          if(isTimeoutExtra()) state = IDLE;
+          break;
+
+        /*****************************|
+              Dual Exit Pending
+        |*****************************/
+        case DUALEX_P:
+          if(edg_out){
+            --counter;
+            --counter;
+            state = CLEAR;
+            state_start = millis();
+          }
+          if(isTimeoutExtra()) state = IDLE;
           break;
 
         /*****************************|
             Bi-Directional Movement
         |*****************************/
-        case BIDIR_P:
+        /*case BIDIR_P:
           digitalWrite(BIDIR_LED, HIGH);
           if((LIN && ROUT) || (LOUT && RIN)){
             state = CLEAR;
@@ -488,19 +523,19 @@ void loop()
           }
           if(isTimeout()) state = IDLE;
           break;
-
+        */
         /*****************************|
                 Enter Pending
         |*****************************/
         case ENTER_P:
-          if(IN ){//&& millis()-state_start>500){
+          if(IN){//&& millis()-state_start>500){
             ++counter;
             state = CLEAR;
             digitalWrite(CTR_INC, HIGH);
-            if(dblp && (LINS || RINS)){
+            /*if(dblp && (LINS || RINS)){
               ++counter;
               dbl = 1;
-            }
+            }*/
             state_start = millis();
           }
           if(isTimeout()) state = IDLE;
@@ -514,10 +549,10 @@ void loop()
             --counter;
             state = CLEAR;
             digitalWrite(CTR_DEC, HIGH);
-            if(dblp && (LOUTS || ROUTS)){
+            /*if(dblp && (LOUTS || ROUTS)){
               --counter;
               dbl = 1;
-            }
+            }*/
             state_start = millis();
           } 
           
