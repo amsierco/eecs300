@@ -540,10 +540,10 @@ void loop()
           break;
       }
 
-      client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d<br>",
+      client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
                     counter, state, dbl, dblp);
     }
-    
+
     client.stop();
     Serial.println("Client disconnected");
   }
