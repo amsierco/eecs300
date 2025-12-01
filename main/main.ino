@@ -30,6 +30,8 @@ const int image_width = fbfm ? 4 : 8;         // Row of TOF image resolution
 // Debugging
 #define I2C_DEBUG false
 
+#define USE_WIFI false
+
 /*****************************|
       Physical Parameter
 |*****************************/
@@ -412,6 +414,7 @@ bool pollSensors( WiFiClient client) {
     printf("Right TOF Disconnected\n\r");
   }
   if(!tofl.isConnected() || !tofr.isConnected()) {
+    digitalWrite(LED_PIN, 0);
     return false;
   }
   
@@ -454,9 +457,13 @@ bool pollSensors( WiFiClient client) {
   edg_in = LINS && RINS;
   edg_out = LOUTS && ROUTS;
 
-  client.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
-  client.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
-  
+  if(USE_WIFI){
+    client.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
+    client.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
+  } else {
+    Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
+    Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
+  }
   return true;
 }
 
@@ -464,10 +471,11 @@ void loop()
 { 
   WiFiClient client = tcpServer.available();
   
-  if(client){
-    while(client.connected()){
+  if(client || !USE_WIFI){
+    while(client.connected() || !USE_WIFI){
       // Read TOF Data
       pollSensors(client);
+      digitalWrite(LED_PIN, 1);
       // FSM 
       switch(state){
         /*****************************|
@@ -575,13 +583,22 @@ void loop()
           break;
       }
 
-      client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
-                    counter, state, dbl, dblp);
+      if(USE_WIFI){
+        client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
+                      counter, state, dbl, dblp);
+      } else {
+        Serial.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
+                      counter, state, dbl, dblp);
+      }
     }
 
     client.stop();
     Serial.println("Client disconnected");
   }
+  digitalWrite(LED_PIN, 1);
+  delay(500);
+  digitalWrite(LED_PIN, 0);
+  delay(500);
   return; // Skip legacy serial logic
 
   /*****************************|
