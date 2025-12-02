@@ -30,7 +30,7 @@ const int image_width = fbfm ? 4 : 8;         // Row of TOF image resolution
 // Debugging
 #define I2C_DEBUG false
 
-#define USE_WIFI false
+#define USE_WIFI true
 
 /*****************************|
       Physical Parameter
@@ -458,8 +458,8 @@ bool pollSensors( WiFiClient client) {
   edg_out = LOUTS && ROUTS;
 
   if(USE_WIFI){
-    client.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
-    client.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
+    //client.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
+    //client.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
   } else {
     Serial.printf("Inner: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LINS, LIN, RIN, RINS, edg_in);
     Serial.printf("Outer: %-4d %-4d %-4d %-4d | Dual Edges: %-4d \n\r", LOUTS, LOUT, ROUT, ROUTS, edg_out);
@@ -584,8 +584,9 @@ void loop()
       }
 
       if(USE_WIFI){
-        client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
-                      counter, state, dbl, dblp);
+        //client.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
+        //              counter, state, dbl, dblp);
+        client.printf("Count: %-4d\n\r", counter);
       } else {
         Serial.printf("Count: %-4d | State: %4d | Double: %4d | Pending: %4d\n\r",
                       counter, state, dbl, dblp);
